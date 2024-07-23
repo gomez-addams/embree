@@ -1,4 +1,4 @@
-% rtcGetSceneBounds(3) | Embree Ray Tracing Kernels 3
+% rtcGetSceneBounds(3) | Embree Ray Tracing Kernels 4
 
 #### NAME
 
@@ -6,7 +6,7 @@
 
 #### SYNOPSIS
 
-    #include <embree3/rtcore.h>
+    #include <embree4/rtcore.h>
 
     struct RTCORE_ALIGN(16) RTCBounds
     {

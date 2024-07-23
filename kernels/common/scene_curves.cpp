@@ -526,7 +526,7 @@ namespace embree
         return LBBox3fa([&] (size_t itime) { return bounds(ofs, scale, r_scale0, space, primID, itime); }, dt, this->time_range, fnumTimeSegments);
       }
       
-      PrimInfo createPrimRefArray(mvector<PrimRef>& prims, const range<size_t>& r, size_t k, unsigned int geomID) const
+      PrimInfo createPrimRefArray(PrimRef* prims, const range<size_t>& r, size_t k, unsigned int geomID) const
       {
         PrimInfo pinfo(empty);
         for (size_t j=r.begin(); j<r.end(); j++)
@@ -535,6 +535,24 @@ namespace embree
           const BBox3fa box = bounds(j);
           const PrimRef prim(box,geomID,unsigned(j));
           pinfo.add_center2(prim);
+          prims[k++] = prim;
+        }
+        return pinfo;
+      }
+
+      PrimInfo createPrimRefArrayMB(PrimRef* prims, const BBox1f& time_range, const range<size_t>& r, size_t k, unsigned int geomID) const
+      {
+        PrimInfo pinfo(empty);
+        const BBox1f t0t1 = BBox1f::intersect(this->time_range, time_range);
+        if (t0t1.empty()) return pinfo;
+        
+        for (size_t j=r.begin(); j<r.end(); j++)
+        {
+          if (!valid(ctype, j, this->timeSegmentRange(t0t1))) continue;
+          const LBBox3fa lbounds = linearBounds(j,t0t1);
+          if (lbounds.bounds0.empty() || lbounds.bounds1.empty()) continue; // checks oriented curves with invalid normals which cause NaNs here
+          const PrimRef prim(lbounds.bounds(),geomID,unsigned(j));
+          pinfo.add_primref(prim);
           prims[k++] = prim;
         }
         return pinfo;

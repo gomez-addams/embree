@@ -4,6 +4,7 @@
 #include "tutorial.h"
 #include "scene.h"
 #include "statistics.h"
+#include <thread>
 
 #if defined(USE_GLFW)
 
@@ -26,50 +27,49 @@
 #include "../scenegraph/xml_loader.h"
 #include "../image/image.h"
 
+#if defined(EMBREE_SYCL_SUPPORT) && defined(EMBREE_SYCL_TUTORIAL)
+#include "../sycl/util.h"
+#endif
+
 namespace embree
 {
+#if defined(EMBREE_SYCL_SUPPORT)
+  sycl::context* global_gpu_context = nullptr;
+  sycl::device* global_gpu_device = nullptr;
+  sycl::queue* global_gpu_queue = nullptr;
+#endif
+
+  extern "C" void renderFrameStandard(int* pixels, const unsigned int width, const unsigned int height, const float time, const ISPCCamera& camera);
+    
   /* access to debug shader render frame functions */
   typedef void (* renderFrameFunc)(int* pixels, const unsigned int width, const unsigned int height, const float time, const ISPCCamera& camera);
-  renderFrameFunc renderFrame;
-  
-  extern "C" void renderFrameStandard(int* pixels, const unsigned int width, const unsigned int height, const float time, const ISPCCamera& camera);
-  extern "C" void renderFrameEyeLight(int* pixels, const unsigned int width, const unsigned int height, const float time, const ISPCCamera& camera);
-  extern "C" void renderFrameOcclusion(int* pixels, const unsigned int width, const unsigned int height, const float time, const ISPCCamera& camera);
-  extern "C" void renderFrameUV      (int* pixels, const unsigned int width, const unsigned int height, const float time, const ISPCCamera& camera);
-  extern "C" void renderFrameNg      (int* pixels, const unsigned int width, const unsigned int height, const float time, const ISPCCamera& camera);
-  extern "C" void renderFrameGeomID  (int* pixels, const unsigned int width, const unsigned int height, const float time, const ISPCCamera& camera);
-  extern "C" void renderFrameGeomIDPrimID(int* pixels, const unsigned int width, const unsigned int height, const float time, const ISPCCamera& camera);
-  extern "C" void renderFrameTexCoords(int* pixels, const unsigned int width, const unsigned int height, const float time, const ISPCCamera& camera);
-  extern "C" void renderFrameCycles  (int* pixels, const unsigned int width, const unsigned int height, const float time, const ISPCCamera& camera);
-  extern "C" void renderFrameAmbientOcclusion(int* pixels, const unsigned int width, const unsigned int height, const float time, const ISPCCamera& camera);
-  extern "C" void renderFrameDifferentials(int* pixels, const unsigned int width, const unsigned int height, const float time, const ISPCCamera& camera);
-  
+  renderFrameFunc renderFrame = renderFrameStandard;
+    
   extern "C"
   {
     RTCDevice g_device = nullptr;
-    
+
     float g_debug = 0.0f;
-    Mode g_mode = MODE_NORMAL;
     ISPCScene* g_ispc_scene = nullptr;
 
     /* intensity scaling for traversal cost visualization */
     float scale = 1.0f / 1000000.0f;
     bool g_changed = false;
 
+    bool g_motion_blur = true;
+
+#if !defined(__SYCL_DEVICE_ONLY__)
     int64_t get_tsc() { return read_tsc(); }
+#endif
 
     unsigned int g_numThreads = 0;
 
-    RTCIntersectContextFlags g_iflags_coherent = RTC_INTERSECT_CONTEXT_FLAG_COHERENT;
-    RTCIntersectContextFlags g_iflags_incoherent = RTC_INTERSECT_CONTEXT_FLAG_INCOHERENT;
+    RTCRayQueryFlags g_iflags_coherent = RTC_RAY_QUERY_FLAG_COHERENT;
+    RTCRayQueryFlags g_iflags_incoherent = RTC_RAY_QUERY_FLAG_INCOHERENT;
 
     int g_animation_mode = false;
 
     RayStats* g_stats = nullptr;
-
-    unsigned int render_texcoords_mode = 0;
-
-    int differentialMode = 0;
   }
 
   extern "C" int g_instancing_mode;
@@ -79,47 +79,38 @@ namespace embree
   {
     if (code == RTC_ERROR_NONE)
       return;
-    
-    printf("Embree: ");
-    switch (code) {
-    case RTC_ERROR_UNKNOWN          : printf("RTC_ERROR_UNKNOWN"); break;
-    case RTC_ERROR_INVALID_ARGUMENT : printf("RTC_ERROR_INVALID_ARGUMENT"); break;
-    case RTC_ERROR_INVALID_OPERATION: printf("RTC_ERROR_INVALID_OPERATION"); break;
-    case RTC_ERROR_OUT_OF_MEMORY    : printf("RTC_ERROR_OUT_OF_MEMORY"); break;
-    case RTC_ERROR_UNSUPPORTED_CPU  : printf("RTC_ERROR_UNSUPPORTED_CPU"); break;
-    case RTC_ERROR_CANCELLED        : printf("RTC_ERROR_CANCELLED"); break;
-    default                         : printf("invalid error code"); break;
-    }
+
+    printf("Embree: %s", rtcGetErrorString(code));
     if (str) {
       printf(" (");
       while (*str) putchar(*str++);
       printf(")\n");
+    } else {
+      printf("\n");
     }
     exit(1);
   }
-  
+
   TutorialApplication* TutorialApplication::instance = nullptr;
 
-  TutorialApplication::TutorialApplication (const std::string& tutorialName, int features)
+  TutorialApplication::TutorialApplication (const std::string& tutorialName, int features, int w, int h)
 
     : Application(features),
       tutorialName(tutorialName),
 
-      shader(SHADER_DEFAULT),
-
-      width(512),
-      height(512),
+      width(w),
+      height(h),
       pixels(nullptr),
 
       outputImageFilename(""),
       referenceImageFilename(""),
-      referenceImageThreshold(32.0f),
+      referenceImageThreshold(35.0f),
 
       interactive(true),
       fullscreen(false),
 
-      window_width(512),
-      window_height(512),
+      window_width(1024),
+      window_height(1024),
 
       time0(getSeconds()),
       debug_int0(0),
@@ -129,6 +120,10 @@ namespace embree
       clickX(0.0), clickY(0.0),
       speed(1.0f),
       moveDelta(zero),
+
+      animate(true),
+      render_time(0.f),
+
       command_line_camera(false),
       print_frame_rate(false),
       avg_render_time(64,1.0),
@@ -141,8 +136,8 @@ namespace embree
       debug2(0),
       debug3(0),
 
-      iflags_coherent(RTC_INTERSECT_CONTEXT_FLAG_COHERENT),
-      iflags_incoherent(RTC_INTERSECT_CONTEXT_FLAG_INCOHERENT)
+      iflags_coherent(RTC_RAY_QUERY_FLAG_COHERENT),
+      iflags_incoherent(RTC_RAY_QUERY_FLAG_INCOHERENT)
   {
     /* only a single instance of this class is supported */
     assert(instance == nullptr);
@@ -170,6 +165,10 @@ namespace embree
     registerOption("compare-threshold", [this] (Ref<ParseStream> cin, const FileName& path) {
         referenceImageThreshold = cin->getFloat();
       }, "--compare-threshold <float>: threshold in number of wrong pixels when image is considered wrong");
+
+    registerOption("frames", [this] (Ref<ParseStream> cin, const FileName& path) {
+        numFrames = cin->getInt();
+      }, "--frames <int>: number of frames to render in compare or output mode");
 
     /* camera settings */
     registerOption("vp", [this] (Ref<ParseStream> cin, const FileName& path) {
@@ -240,62 +239,27 @@ namespace embree
        }, "--debug3: sets internal debugging value");
 
      registerOption("time", [this] (Ref<ParseStream> cin, const FileName& path) {
-         shader = SHADER_EYELIGHT;
-         g_debug = cin->getFloat();
+         g_motion_blur = false;
+         animate = false;
+         render_time = cin->getFloat();
+         g_debug = render_time;
        }, "--time: sets time for motion blur");
 
-    /* output filename */
-    registerOption("shader", [this] (Ref<ParseStream> cin, const FileName& path) {
-        std::string mode = cin->getString();
-        if      (mode == "default" ) shader = SHADER_DEFAULT;
-        else if (mode == "eyelight") shader = SHADER_EYELIGHT;
-        else if (mode == "occlusion") shader = SHADER_OCCLUSION;
-        else if (mode == "uv"      ) shader = SHADER_UV;
-        else if (mode == "texcoords") shader = SHADER_TEXCOORDS;
-        else if (mode == "texcoords-grid") shader = SHADER_TEXCOORDS_GRID;
-        else if (mode == "Ng"      ) shader = SHADER_NG;
-        else if (mode == "cycles"  ) { shader = SHADER_CYCLES; scale = cin->getFloat(); }
-        else if (mode == "geomID"  ) shader = SHADER_GEOMID;
-        else if (mode == "primID"  ) shader = SHADER_GEOMID_PRIMID;
-        else if (mode == "ao"      ) shader = SHADER_AMBIENT_OCCLUSION;
-        else throw std::runtime_error("invalid shader:" +mode);
-      },
-      "--shader <string>: sets shader to use at startup\n"
-      "  default: default tutorial shader\n"
-      "  eyelight: eyelight shading\n"
-      "  occlusion: occlusion shading\n"
-      "  uv: uv debug shader\n"
-      "  texcoords: texture coordinate debug shader\n"
-      "  texcoords-grid: grid texture debug shader\n"
-      "  Ng: visualization of shading normal\n"
-      "  cycles <float>: CPU cycle visualization\n"
-      "  geomID: visualization of geometry ID\n"
-      "  primID: visualization of geometry and primitive ID\n"
-      "  ao: ambient occlusion shader");
-
-    if (features & FEATURE_STREAM)
-    {
-      /* register parsing of stream mode */
-      registerOption("mode", [] (Ref<ParseStream> cin, const FileName& path) {
-          std::string mode = cin->getString();
-          if      (mode == "normal") g_mode = MODE_NORMAL;
-          else if (mode == "stream") g_mode = MODE_STREAM;
-          else throw std::runtime_error("invalid mode:" +mode);
-        },
-        "--mode: sets rendering mode\n"
-        "  normal  : normal mode\n"
-        "  stream  : stream mode\n");
-    }
-
     registerOption("coherent", [this] (Ref<ParseStream> cin, const FileName& path) {
-        g_iflags_coherent   = iflags_coherent   = RTC_INTERSECT_CONTEXT_FLAG_COHERENT;
-        g_iflags_incoherent = iflags_incoherent = RTC_INTERSECT_CONTEXT_FLAG_COHERENT;
-      }, "--coherent: force using RTC_INTERSECT_CONTEXT_FLAG_COHERENT hint when tracing rays");
+        g_iflags_coherent   = iflags_coherent   = RTC_RAY_QUERY_FLAG_COHERENT;
+        g_iflags_incoherent = iflags_incoherent = RTC_RAY_QUERY_FLAG_COHERENT;
+      }, "--coherent: force using RTC_RAY_QUERY_FLAG_COHERENT hint when tracing rays");
 
     registerOption("incoherent", [this] (Ref<ParseStream> cin, const FileName& path) {
-        g_iflags_coherent   = iflags_coherent   = RTC_INTERSECT_CONTEXT_FLAG_INCOHERENT;
-        g_iflags_incoherent = iflags_incoherent = RTC_INTERSECT_CONTEXT_FLAG_INCOHERENT;
-      }, "--incoherent: force using RTC_INTERSECT_CONTEXT_FLAG_INCOHERENT hint when tracing rays");
+        g_iflags_coherent   = iflags_coherent   = RTC_RAY_QUERY_FLAG_INCOHERENT;
+        g_iflags_incoherent = iflags_incoherent = RTC_RAY_QUERY_FLAG_INCOHERENT;
+      }, "--incoherent: force using RTC_RAY_QUERY_FLAG_INCOHERENT hint when tracing rays");
+
+#if defined(EMBREE_SYCL_TUTORIAL)
+    registerOption("jit-cache", [this] (Ref<ParseStream> cin, const FileName& path) {
+         jit_cache = cin->getInt();
+       }, "--jit-cache <0/1>: enabled (1) or disables (0) JIT caching");
+#endif
   }
 
   TutorialApplication::~TutorialApplication()
@@ -304,12 +268,26 @@ namespace embree
     ispc_scene = nullptr;
     device_cleanup();
     if (g_device) rtcReleaseDevice(g_device);
-    alignedFree(pixels);
+    alignedUSMFree(pixels);
     pixels = nullptr;
+
+#if defined(EMBREE_SYCL_SUPPORT)
+    delete device; device = nullptr;
+    delete queue; queue = nullptr;
+    delete context; context = nullptr;
+#endif
+    
     width = 0;
     height = 0;
     alignedFree(g_stats);
     g_stats = nullptr;
+
+#if defined(EMBREE_SYCL_SUPPORT)
+    
+    if (features & FEATURE_SYCL)
+      disableUSMAllocTutorial();
+
+#endif
   }
 
   SceneLoadingTutorialApplication::SceneLoadingTutorialApplication (const std::string& tutorialName, int features)
@@ -657,7 +635,10 @@ namespace embree
     resize(width,height);
     ISPCCamera ispccamera = camera.getISPCCamera(width,height);
     initRayStats();
-    render(pixels,width,height,0.0f,ispccamera);
+    
+    for (unsigned int i=0; i<numFrames; i++)
+      render(pixels,width,height,render_time,ispccamera);
+    
     Ref<Image> image = new Image4uc(width, height, (Col4uc*)pixels);
     storeImage(image, fileName);
   }
@@ -667,8 +648,10 @@ namespace embree
     resize(width,height);
     ISPCCamera ispccamera = camera.getISPCCamera(width,height);
     initRayStats();
-    device_render(pixels,width,height,0.0f,ispccamera);
-    renderFrame((int*)pixels,width,height,0.0f,ispccamera);
+    
+    for (unsigned int i=0; i<numFrames; i++)
+      render(pixels,width,height,render_time,ispccamera);
+
     Ref<Image> image = new Image4uc(width, height, (Col4uc*)pixels);
     Ref<Image> reference = loadImage(fileName);
     const double error = compareImages(image,reference);
@@ -685,10 +668,11 @@ namespace embree
     if (width == this->width && height == this->height && pixels)
       return;
 
-    if (pixels) alignedFree(pixels);
     this->width = width;
     this->height = height;
-    pixels = (unsigned*) alignedMalloc(width*height*sizeof(unsigned),64);
+      
+    if (pixels) alignedUSMFree(pixels);
+    pixels = (unsigned*) alignedUSMMalloc(width*height*sizeof(unsigned),64,EMBREE_USM_SHARED_DEVICE_READ_WRITE);
   }
 
   void TutorialApplication::set_scene (TutorialScene* in)
@@ -719,6 +703,19 @@ namespace embree
     TutorialApplication::instance->reshapeFunc(window,width,height);
   }
 
+  void TutorialApplication::setCallbackFunctions(GLFWwindow* window)
+  {
+    glfwSetKeyCallback(window,embree::keyboardFunc);
+    glfwSetCursorPosCallback(window,embree::motionFunc);
+    glfwSetMouseButtonCallback(window,embree::clickFunc);
+    glfwSetCharCallback(window, ImGui_ImplGlfw_CharCallback);
+    glfwSetScrollCallback(window, ImGui_ImplGlfw_ScrollCallback);
+    glfwSetWindowSizeCallback(window,embree::reshapeFunc);
+    glfwSetWindowFocusCallback(window, ImGui_ImplGlfw_WindowFocusCallback);
+    glfwSetCursorEnterCallback(window, ImGui_ImplGlfw_CursorEnterCallback);
+    glfwSetMonitorCallback(ImGui_ImplGlfw_MonitorCallback);
+  }
+
   GLFWwindow* TutorialApplication::createFullScreenWindow()
   {
     GLFWmonitor* monitor = glfwGetPrimaryMonitor();
@@ -728,12 +725,6 @@ namespace embree
     glfwWindowHint(GLFW_BLUE_BITS,mode->blueBits);
     glfwWindowHint(GLFW_REFRESH_RATE,mode->refreshRate);
     GLFWwindow* window = glfwCreateWindow(mode->width,mode->height,tutorialName.c_str(),monitor,nullptr);
-    glfwSetKeyCallback(window,embree::keyboardFunc);
-    glfwSetCursorPosCallback(window,embree::motionFunc);
-    glfwSetMouseButtonCallback(window,embree::clickFunc);
-    glfwSetCharCallback(window, ImGui_ImplGlfw_CharCallback);
-    glfwSetScrollCallback(window, ImGui_ImplGlfw_ScrollCallback);
-    glfwSetWindowSizeCallback(window,embree::reshapeFunc);
     resize(mode->width,mode->height);
     return window;
   }
@@ -741,12 +732,6 @@ namespace embree
   GLFWwindow* TutorialApplication::createStandardWindow(int width, int height)
   {
     GLFWwindow* window = glfwCreateWindow(width,height,tutorialName.c_str(),nullptr,nullptr);
-    glfwSetKeyCallback(window,embree::keyboardFunc);
-    glfwSetCursorPosCallback(window,embree::motionFunc);
-    glfwSetMouseButtonCallback(window,embree::clickFunc);
-    glfwSetCharCallback(window, ImGui_ImplGlfw_CharCallback);
-    glfwSetScrollCallback(window, ImGui_ImplGlfw_ScrollCallback);
-    glfwSetWindowSizeCallback(window,embree::reshapeFunc);
     resize(width,height);
     return window;
   }
@@ -754,62 +739,6 @@ namespace embree
   /* called when a key is pressed */
   void TutorialApplication::keypressed(int key)
   {
-    if (key == GLFW_KEY_F1) {
-      renderFrame = renderFrameStandard;
-      g_changed = true;
-    }
-    else if (key == GLFW_KEY_F2) {
-      renderFrame = renderFrameEyeLight;
-      g_changed = true;
-    }
-    else if (key == GLFW_KEY_F3) {
-      renderFrame = renderFrameOcclusion;
-      g_changed = true;
-    }
-    else if (key == GLFW_KEY_F4) {
-      renderFrame = renderFrameUV;
-      g_changed = true;
-    }
-    else if (key == GLFW_KEY_F5) {
-      renderFrame = renderFrameNg;
-      g_changed = true;
-    }
-    else if (key == GLFW_KEY_F6) {
-      renderFrame = renderFrameGeomID;
-      g_changed = true;
-    }
-    else if (key == GLFW_KEY_F7) {
-      renderFrame = renderFrameGeomIDPrimID;
-      g_changed = true;
-    }
-    else if (key == GLFW_KEY_F8) {
-      if (renderFrame == renderFrameTexCoords) render_texcoords_mode++;
-      renderFrame = renderFrameTexCoords;
-      g_changed = true;
-    }
-    else if (key == GLFW_KEY_F9) {
-      if (renderFrame == renderFrameCycles) scale *= 2.0f;
-      renderFrame = renderFrameCycles;
-      g_changed = true;
-    }
-    else if (key == GLFW_KEY_F10) {
-      if (renderFrame == renderFrameCycles) scale *= 0.5f;
-      renderFrame = renderFrameCycles;
-      g_changed = true;
-    }
-    else if (key == GLFW_KEY_F11) {
-      renderFrame = renderFrameAmbientOcclusion;
-      g_changed = true;
-    }
-    else if (key == GLFW_KEY_F12) {
-      if (renderFrame == renderFrameDifferentials) {
-        differentialMode = (differentialMode+1)%17;
-      } else {
-        renderFrame = renderFrameDifferentials;
-        differentialMode = 0;
-      }
-      g_changed = true;
-    }
   }
 
   void TutorialApplication::keyboardFunc(GLFWwindow* window_in, int key, int scancode, int action, int mods)
@@ -852,11 +781,13 @@ namespace embree
             width = window_width;
             height = window_height;
             window = createStandardWindow(width,height);
+            setCallbackFunctions(window);
           }
           else {
             window_width = width;
             window_height = height;
             window = createFullScreenWindow();
+            setCallbackFunctions(window);
           }
           glfwMakeContextCurrent(window);
           fullscreen = !fullscreen;
@@ -918,6 +849,9 @@ namespace embree
           camera.from += dot(delta,right)*right + dot(delta,up)*up;
         }
       }
+      else if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
+        printf("pixel pos (%d, %d)\n", (int)x, (int)y);
+      }
       else
       {
         clickX = x; clickY = y;
@@ -930,6 +864,7 @@ namespace embree
 
   void TutorialApplication::motionFunc(GLFWwindow* window, double x, double y)
   {
+    ImGui_ImplGlfw_CursorPosCallback(window, x, y);
     if (ImGui::GetIO().WantCaptureMouse) return;
   
     float dClickX = float(clickX - x), dClickY = float(clickY - y);
@@ -946,7 +881,7 @@ namespace embree
   void TutorialApplication::displayFunc()
   {
     double t0 = getSeconds();
-    const float time = float(t0-time0);
+    const float time = g_motion_blur ? float(t0-time0) : (animate ? 0.5 * sinf(fabsf(float(t0-time0))) + 0.5 : render_time);
     
     /* update camera */
     camera.move(moveDelta.x*speed, moveDelta.y*speed, moveDelta.z*speed);
@@ -963,6 +898,7 @@ namespace embree
     initRayStats();
     render(pixels,width,height,time,ispccamera);
     double dt0 = getSeconds()-t0;
+    if (ispccamera.render_time != 0.0) dt0 = ispccamera.render_time;
     avg_render_time.add(dt0);
     double mrayps = double(getNumRays())/(1000000.0*dt0);
     avg_mrayps.add(mrayps);
@@ -972,7 +908,10 @@ namespace embree
     glPixelZoom(1.0f,-1.0f);
     glDrawPixels(width,height,GL_RGBA,GL_UNSIGNED_BYTE,pixels);
 
-    ImGui_ImplGlfwGL2_NewFrame();
+    // Start the Dear ImGui frame
+    ImGui_ImplOpenGL2_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
     
     ImGuiWindowFlags window_flags = 0;
     window_flags |= ImGuiWindowFlags_NoTitleBar;
@@ -990,10 +929,15 @@ namespace embree
     ImGui::Begin("Embree", nullptr, window_flags);
     drawGUI();
     
-    double avg_time = avg_render_time.get();
-    double fps = avg_time != 0.0 ? 1.0f/avg_time : 0.0;
-    ImGui::Text("%3.2f fps",fps);
-#if defined(RAY_STATS)
+    double render_dt = avg_render_time.get();
+    double render_fps = render_dt != 0.0 ? 1.0f/render_dt : 0.0;
+    ImGui::Text("Render: %3.2f fps",render_fps);
+
+    double total_dt = avg_frame_time.get();
+    double total_fps = total_dt != 0.0 ? 1.0f/total_dt : 0.0;
+    ImGui::Text("Total: %3.2f fps",total_fps);
+
+#if defined(RAY_STATS) && !defined(EMBREE_SYCL_TUTORIAL)
     ImGui::Text("%3.2f Mray/s",avg_mrayps.get());
 #endif
     ImGui::End();
@@ -1001,7 +945,7 @@ namespace embree
     //ImGui::ShowDemoWindow();
         
     ImGui::Render();
-    ImGui_ImplGlfwGL2_RenderDrawData(ImGui::GetDrawData());
+    ImGui_ImplOpenGL2_RenderDrawData(ImGui::GetDrawData());
     
     glfwSwapBuffers(window);
 
@@ -1029,10 +973,10 @@ namespace embree
       stream << "render: ";
       stream << 1.0f/dt0 << " fps, ";
       stream << dt0*1000.0f << " ms, ";
-#if defined(RAY_STATS)
+#if defined(RAY_STATS) && !defined(EMBREE_SYCL_TUTORIAL)
       stream << mrayps << " Mray/s, ";
 #endif
-      stream << "display: ";
+      stream << "total: ";
       stream << 1.0f/dt1 << " fps, ";
       stream << dt1*1000.0f << " ms, ";
       stream << width << "x" << height << " pixels";
@@ -1049,68 +993,53 @@ namespace embree
     this->width = width; this->height = height;
   }
 
-   void TutorialApplication::renderInteractive()
-   {
-     window_width = width;
-     window_height = height;
-     glfwSetErrorCallback(errorFunc);
-     glfwInit();
-     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR,2);
-     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR,0);
-     
-     if (fullscreen) window = createFullScreenWindow();
-     else            window = createStandardWindow(width,height);
-     
-     glfwMakeContextCurrent(window);
-     glfwSwapInterval(1);
-     reshapeFunc(window,0,0);
-     
-     // Setup ImGui binding
-     ImGui::CreateContext();
-     ImGuiIO& io = ImGui::GetIO(); (void)io;
-     //io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;  // Enable Keyboard Controls
-     ImGui_ImplGlfwGL2_Init(window, false);
-     
-     // Setup style
-     ImGui::StyleColorsDark();
-     //ImGui::StyleColorsClassic();
-     
-     // Load Fonts
-     // - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use ImGui::PushFont()/PopFont() to select them. 
-     // - AddFontFromFileTTF() will return the ImFont* so you can store it if you need to select the font among multiple. 
-     // - If the file cannot be loaded, the function will return NULL. Please handle those errors in your application (e.g. use an assertion, or display an error and quit).
-     // - The fonts will be rasterized at a given size (w/ oversampling) and stored into a texture when calling ImFontAtlas::Build()/GetTexDataAsXXXX(), which ImGui_ImplXXXX_NewFrame below will call.
-     // - Read 'misc/fonts/README.txt' for more instructions and details.
-     // - Remember that in C/C++ if you want to include a backslash \ in a string literal you need to write a double backslash \\ !
-     //io.Fonts->AddFontDefault();
-     //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf", 16.0f);
-     //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf", 15.0f);
-     //io.Fonts->AddFontFromFileTTF("../../misc/fonts/DroidSans.ttf", 16.0f);
-     //io.Fonts->AddFontFromFileTTF("../../misc/fonts/ProggyTiny.ttf", 10.0f);
-     //ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf", 18.0f, NULL, io.Fonts->GetGlyphRangesJapanese());
-     //IM_ASSERT(font != NULL);
-     
-     while (!glfwWindowShouldClose(window))
-     {
-       // You can read the io.WantCaptureMouse, io.WantCaptureKeyboard flags to tell if dear imgui wants to use your inputs.
-       // - When io.WantCaptureMouse is true, do not dispatch mouse input data to your main application.
-       // - When io.WantCaptureKeyboard is true, do not dispatch keyboard input data to your main application.
-       // Generally you may always pass all inputs to dear imgui, and hide them from your application based on those two flags.
-       glfwPollEvents();
-       
-       displayFunc();
-     }
-     
-     ImGui_ImplGlfwGL2_Shutdown();
-     ImGui::DestroyContext();
-     
-     glfwDestroyWindow(window);
-     glfwTerminate();
-   }
-  
+  void TutorialApplication::renderInteractive()
+  {
+    window_width = width;
+    window_height = height;
+    glfwSetErrorCallback(errorFunc);
+    glfwInit();
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR,2);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR,0);
+
+    if (fullscreen) window = createFullScreenWindow();
+    else            window = createStandardWindow(width,height);
+
+    glfwMakeContextCurrent(window);
+    glfwSwapInterval(0);
+    reshapeFunc(window,0,0);
+
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+
+    ImGui_ImplGlfw_InitForOpenGL(window, true);
+    ImGui_ImplOpenGL2_Init();
+
+    setCallbackFunctions(window);
+
+    // Setup style
+    ImGui::StyleColorsDark();
+
+    while (!glfwWindowShouldClose(window))
+    {
+      glfwPollEvents();
+
+      displayFunc();
+    }
+
+    // Cleanup
+    ImGui_ImplOpenGL2_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+
+    glfwDestroyWindow(window);
+    glfwTerminate();
+  }
+
 #endif
   
-  void TutorialApplication::render(unsigned* pixels, const unsigned width, const unsigned height, const float time, const ISPCCamera& camera) {
+  void TutorialApplication::render(unsigned* pixels, const unsigned width, const unsigned height, const float time, const ISPCCamera& camera)
+  {
     device_render(pixels,width,height,time,camera);
     renderFrame((int*)pixels,width,height,time,camera);
   }
@@ -1124,24 +1053,8 @@ namespace embree
     rtcSetDeviceProperty(nullptr,(RTCDeviceProperty) 1000003, debug3);
 
     /* initialize ray tracing core */
-    renderFrame = renderFrameStandard;
     device_init(rtcore.c_str());
 
-    /* set shader mode */
-    switch (shader) {
-    case SHADER_DEFAULT  : renderFrame = renderFrameStandard; break;
-    case SHADER_EYELIGHT : renderFrame = renderFrameEyeLight; break;
-    case SHADER_OCCLUSION: renderFrame = renderFrameOcclusion; break;
-    case SHADER_UV       : renderFrame = renderFrameUV; break;
-    case SHADER_TEXCOORDS: renderFrame = renderFrameTexCoords; render_texcoords_mode = 0; break;
-    case SHADER_TEXCOORDS_GRID: renderFrame = renderFrameTexCoords; render_texcoords_mode = 1; break;
-    case SHADER_NG       : renderFrame = renderFrameNg; break;
-    case SHADER_CYCLES   : renderFrame = renderFrameCycles; break;
-    case SHADER_GEOMID   : renderFrame = renderFrameGeomID; break;
-    case SHADER_GEOMID_PRIMID: renderFrame = renderFrameGeomIDPrimID; break;
-    case SHADER_AMBIENT_OCCLUSION: renderFrame = renderFrameAmbientOcclusion; break;
-    };
-    
     /* render to disk */
     if (outputImageFilename.str() != "")
       renderToFile(outputImageFilename);
@@ -1162,6 +1075,81 @@ namespace embree
 #endif
   }
 
+  void TutorialApplication::create_device()
+  {
+#if defined(EMBREE_SYCL_SUPPORT) && defined(EMBREE_SYCL_TUTORIAL)
+
+    /* create SYCL device */
+    if (features & FEATURE_SYCL)
+    {
+      if (jit_cache)
+      {
+        /* enable SYCL JIT caching */
+        FileName exe = getExecutableFileName();
+        FileName cache_dir = exe.path() + FileName("cache");
+        
+#if defined(__WIN32__)
+        _putenv_s("SYCL_CACHE_PERSISTENT","1");
+        _putenv_s("SYCL_CACHE_DIR",cache_dir.c_str());
+#else
+        setenv("SYCL_CACHE_PERSISTENT","1",1);
+        setenv("SYCL_CACHE_DIR",cache_dir.c_str(),1);
+#endif
+      }
+
+      auto exception_handler = [](sycl::exception_list exceptions)
+      {
+        for (std::exception_ptr const &e : exceptions) {
+          try {
+            std::rethrow_exception(e);
+          } catch (sycl::exception const &e) {
+            std::cout << "ERROR: Caught asynchronous SYCL exception:\n"
+                      << e.what() << std::endl;
+            exit(1);
+          }
+        }
+      };
+
+      /* select device supported by Embree */
+      try {
+        device = new sycl::device(rtcSYCLDeviceSelector);
+      } catch(std::exception& e) {
+        std::cerr << "Caught exception creating sycl::device: " << e.what() << std::endl;
+        printAllSYCLDevices();
+        throw;
+      }
+      sycl::platform platform = device->get_platform();
+      log(1, "Selected SYCL Platform: " + platform.get_info<sycl::info::platform::name>());
+      log(1, "Selected SYCL Device: " + device->get_info<sycl::info::device::name>());
+
+      context = new sycl::context(*device);
+      queue = new sycl::queue(*context, *device, exception_handler, { sycl::property::queue::in_order(), sycl::property::queue::enable_profiling() });
+      g_device = rtcNewSYCLDevice(*context,rtcore.c_str());
+      error_handler(nullptr,rtcGetDeviceError(g_device),rtcGetDeviceLastErrorMessage(g_device));
+      global_gpu_device = device;
+      global_gpu_context = context;
+      global_gpu_queue = queue;
+
+      if (verbosity >= 1) {
+        printAllSYCLDevices();
+      }
+
+      enableUSMAllocTutorial(global_gpu_context, global_gpu_device);
+    }
+
+    /* create standard device */
+    else
+#endif
+      
+    {
+      g_device = rtcNewDevice(rtcore.c_str());
+      error_handler(nullptr,rtcGetDeviceError(g_device));
+    }
+    
+    /* set error handler */
+    rtcSetDeviceErrorFunction(g_device,error_handler,nullptr);
+  }
+    
   int TutorialApplication::main(int argc, char** argv) try
   {
     /* parse command line options */
@@ -1170,12 +1158,8 @@ namespace embree
     /* callback */
     postParseCommandLine();
 
-    /* create device */
-    g_device = rtcNewDevice(rtcore.c_str());
-    error_handler(nullptr,rtcGetDeviceError(g_device));
-
-    /* set error handler */
-    rtcSetDeviceErrorFunction(g_device,error_handler,nullptr);
+    /* create embree device */
+    create_device();
   
     /* start tutorial */
     run(argc,argv);
@@ -1203,13 +1187,9 @@ namespace embree
       std::cout << "Error: " << e.what() << std::endl;
     }
 
-    /* create device */
-    g_device = rtcNewDevice(rtcore.c_str());
-    error_handler(nullptr,rtcGetDeviceError(g_device));
-
-    /* set error handler */
-    rtcSetDeviceErrorFunction(g_device,error_handler,nullptr);
-  
+    /* create embree device */
+    create_device();
+    
     log(1,"application start");
 
     /* execute postponed scene graph operations */
@@ -1362,7 +1342,7 @@ namespace embree
       for (size_t i=olddots; i<newdots; i++) std::cout << "." << std::flush;
     return true;
   }
-
+  
   extern "C" void progressEnd() {
     std::cout << "]" << std::endl;
 }

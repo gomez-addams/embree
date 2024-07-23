@@ -88,6 +88,10 @@ inline uniform Vec3f xfmVector(const uniform AffineSpace3f a, const uniform Vec3
 inline varying Vec3f xfmVector(const uniform AffineSpace3f a, const varying Vec3f v) { return xfmVector(a.l,v); }
 inline varying Vec3f xfmVector(const varying AffineSpace3f a, const varying Vec3f v) { return xfmVector(a.l,v); }
 
+inline uniform Vec3f xfmNormal(const uniform AffineSpace3f a, const uniform Vec3f v) { return xfmNormal(a.l,v); }
+inline varying Vec3f xfmNormal(const uniform AffineSpace3f a, const varying Vec3f v) { return xfmNormal(a.l,v); }
+inline varying Vec3f xfmNormal(const varying AffineSpace3f a, const varying Vec3f v) { return xfmNormal(a.l,v); }
+
 ////////////////////////////////////////////////////////////////////////////////
 /// Comparison Operators
 ////////////////////////////////////////////////////////////////////////////////
@@ -118,6 +122,11 @@ inline uniform AffineSpace3f make_AffineSpace3f_scale(const uniform Vec3f& s) {
 /*! return translation matrix */
 inline uniform AffineSpace3f make_AffineSpace3f_translate(const uniform Vec3f& p) { 
   return make_AffineSpace3f(make_Vec3f(1,0,0),make_Vec3f(0,1,0),make_Vec3f(0,0,1),p); 
+}
+
+/*! return translation matrix */
+inline AffineSpace3f make_AffineSpace3f_translate(const Vec3f& p) {
+  return make_AffineSpace3f(make_Vec3f(1,0,0),make_Vec3f(0,1,0),make_Vec3f(0,0,1),p);
 }
 
 /*! return matrix for rotation around arbitrary axis and point */

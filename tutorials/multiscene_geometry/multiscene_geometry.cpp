@@ -2,6 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "../common/tutorial/tutorial.h"
+#include "../common/tutorial/benchmark_render.h"
+
+#if defined(EMBREE_SYCL_TUTORIAL)
+#  define NAME "multiscene_geometry_sycl"
+#  define FEATURES FEATURE_RTCORE | FEATURE_SYCL
+#else
+#  define NAME "multiscene_geometry"
+#  define FEATURES FEATURE_RTCORE
+#endif
 
 namespace embree
 {
@@ -10,7 +19,7 @@ namespace embree
   struct Tutorial : public TutorialApplication
   {
     Tutorial()
-      : TutorialApplication("dynamic_scene", FEATURE_RTCORE)
+      : TutorialApplication(NAME, FEATURES)
     {
       /* set start camera */
       camera.from = Vec3f(2, 2, 2);
@@ -22,7 +31,7 @@ namespace embree
     void drawGUI() override
     {
       static const char* items[] = { "full scene", "right half", "left half" };
-      ImGui::Combo("",&g_scene_id,items,IM_ARRAYSIZE(items));
+      ImGui::Combo("##scene_id",&g_scene_id,items,IM_ARRAYSIZE(items));
     }
    
     void keypressed(int key) override
@@ -39,5 +48,8 @@ namespace embree
 }
 
 int main(int argc, char** argv) {
+  if (embree::TutorialBenchmark::benchmark(argc, argv)) {
+    return embree::TutorialBenchmark(embree::renderBenchFunc<embree::Tutorial>).main(argc, argv);
+  }
   return embree::Tutorial().main(argc, argv);
 }

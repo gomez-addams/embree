@@ -1,4 +1,4 @@
-% rtcSetGeometryMask(3) | Embree Ray Tracing Kernels 3
+% rtcSetGeometryMask(3) | Embree Ray Tracing Kernels 4
 
 #### NAME
 
@@ -6,7 +6,7 @@
 
 #### SYNOPSIS
 
-    #include <embree3/rtcore.h>
+    #include <embree4/rtcore.h>
 
     void rtcSetGeometryMask(
       RTCGeometry geometry,
@@ -24,12 +24,6 @@ the ray only if the bitwise `and` operation of the geometry mask with
 the ray mask is not 0. This feature can be used to disable selected
 geometries for specifically tagged rays, e.g. to disable shadow casting
 for certain geometries.
-
-Ray masks are disabled in Embree by default at compile time, and can
-be enabled through the `EMBREE_RAY_MASK` parameter in CMake. One can
-query whether ray masks are enabled by querying the
-`RTC_DEVICE_PROPERTY_RAY_MASK_SUPPORTED` device property using
-`rtcGetDeviceProperty`.
 
 #### EXIT STATUS
 

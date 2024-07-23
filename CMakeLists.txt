@@ -1,9 +1,11 @@
 ## Copyright 2009-2021 Intel Corporation
 ## SPDX-License-Identifier: Apache-2.0
 
-SET(EMBREE_VERSION_MAJOR 3)
-SET(EMBREE_VERSION_MINOR 13)
-SET(EMBREE_VERSION_PATCH 4)
+CMAKE_MINIMUM_REQUIRED(VERSION 3.5)
+
+SET(EMBREE_VERSION_MAJOR 4)
+SET(EMBREE_VERSION_MINOR 3)
+SET(EMBREE_VERSION_PATCH 3)
 SET(EMBREE_VERSION_NOTE "")
 
 SET(EMBREE_VERSION ${EMBREE_VERSION_MAJOR}.${EMBREE_VERSION_MINOR}.${EMBREE_VERSION_PATCH})
@@ -11,8 +13,9 @@ MATH(EXPR EMBREE_VERSION_NUMBER "10000*${EMBREE_VERSION_MAJOR} + 100*${EMBREE_VE
 SET(CPACK_RPM_PACKAGE_RELEASE 1)
 
 PROJECT(embree${EMBREE_VERSION_MAJOR})
+SET(EMBREE_PROJECT_COMPILATION ON)
 
-CMAKE_MINIMUM_REQUIRED(VERSION 3.1.0)
+include(CMakeDependentOption)
 
 # We use our own strip tool on macOS to sign during install. This is required as CMake modifies RPATH of the binary during install.
 IF (APPLE AND EMBREE_SIGN_FILE)
@@ -69,7 +72,13 @@ IF(COMMAND cmake_policy)
   if(POLICY CMP0074)
     cmake_policy(SET CMP0074 NEW)
   endif()
-ENDIF(COMMAND cmake_policy)
+  if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
+  endif()
+  if(POLICY CMP0057)
+    cmake_policy(SET CMP0057 NEW)
+  endif()
+ENDIF()
 
 MARK_AS_ADVANCED(CMAKE_BACKWARDS_COMPATIBILITY)
 MARK_AS_ADVANCED(EXECUTABLE_OUTPUT_PATH)
@@ -82,9 +91,7 @@ MARK_AS_ADVANCED(CLEAR CMAKE_CXX_COMPILER)
 
 SET(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/common/cmake" ${CMAKE_MODULE_PATH})
 
-IF (BUILD_TESTING)
-  INCLUDE(test)
-ENDIF()
+INCLUDE(test)
 
 set(BUILD_DOC OFF CACHE INTERNAL "build documentation (internal only)")
 IF (BUILD_DOC)
@@ -112,7 +119,7 @@ ELSE()
   SET(EMBREE_LIB_TYPE SHARED)
 ENDIF()
 
-OPTION(EMBREE_ISPC_SUPPORT "Build Embree with support for ISPC applications." ON)
+OPTION(EMBREE_ISPC_SUPPORT "Build Embree with support for ISPC applications." OFF)
 IF (EMSCRIPTEN)
   SET(EMBREE_ISPC_SUPPORT OFF CACHE BOOL "Build Embree with support for ISPC applications." FORCE)
 ENDIF()
@@ -127,7 +134,7 @@ ENDIF()
 ##############################################################################
 # Configurations (add configurations also to common/cmake/embree-config.cmake)
 
-OPTION(EMBREE_ZIP_MODE "Create Embree ZIP package" OFF)
+OPTION(EMBREE_ZIP_MODE "Create Embree ZIP package" ON)
 MARK_AS_ADVANCED(EMBREE_ZIP_MODE)
 
 OPTION(EMBREE_INSTALL_DEPENDENCIES "Install Embree dependencies in binary packages and install" OFF)
@@ -136,35 +143,104 @@ MARK_AS_ADVANCED(EMBREE_INSTALL_DEPENDENCIES)
 OPTION(EMBREE_STAT_COUNTERS "Enables statistic counters.")
 OPTION(EMBREE_STACK_PROTECTOR "When enabled Embree compiles with stack protection against return address overrides." OFF)
 
-OPTION(EMBREE_RAY_MASK "Enables ray mask support.")
+IF (NOT APPLE)
+  OPTION(EMBREE_SYCL_SUPPORT "Enables SYCL GPU support." OFF)
+ENDIF()
+CMAKE_DEPENDENT_OPTION(EMBREE_SYCL_LARGEGRF "Enables SYCL large GRF support." OFF "EMBREE_SYCL_SUPPORT" OFF)
+CMAKE_DEPENDENT_OPTION(EMBREE_SYCL_DBG "Enables DPC++ debug info." OFF "EMBREE_SYCL_SUPPORT" OFF)
+CMAKE_DEPENDENT_OPTION(EMBREE_SYCL_GEOMETRY_CALLBACK  "Enabled geometry callbacks which are disabled by default for SYCL." OFF  "EMBREE_SYCL_SUPPORT" OFF)
+
+MARK_AS_ADVANCED(EMBREE_SYCL_LARGEGRF)
+MARK_AS_ADVANCED(EMBREE_SYCL_DBG)
+MARK_AS_ADVANCED(EMBREE_SYCL_GEOMETRY_CALLBACK)
+
+IF (EMBREE_SYCL_GEOMETRY_CALLBACK)
+  message(WARNING "Enabling EMBREE_SYCL_GEOMETRY_CALLBACK is experimental and may result in poor performance.")
+ENDIF()
+
+IF (EMBREE_SYCL_SUPPORT)
+  ADD_DEFINITIONS("-DEMBREE_SYCL_SUPPORT")  # FIXME: only use define from rtcore_config.h
+ENDIF()
+
+CMAKE_DEPENDENT_OPTION(EMBREE_SYCL_RT_SIMULATION "Using hardware simulation" OFF "EMBREE_SYCL_SUPPORT" OFF)
+MARK_AS_ADVANCED(EMBREE_SYCL_RT_SIMULATION)
+IF (EMBREE_SYCL_RT_SIMULATION AND NOT EMBREE_SYCL_RT_VALIDATION_API AND EMBREE_SYCL_IMPLICIT_DISPATCH_GLOBALS)
+  MESSAGE(FATAL_ERROR "Using EMBREE_SYCL_RT_SIMULATION requires EMBREE_SYCL_RT_VALIDATION_API=ON and EMBREE_SYCL_IMPLICIT_DISPATCH_GLOBALS=OFF")
+ENDIF()
+IF (EMBREE_SYCL_RT_SIMULATION)
+  ADD_DEFINITIONS("-DEMBREE_SYCL_RT_SIMULATION")
+ENDIF()
+
+CMAKE_DEPENDENT_OPTION(EMBREE_SYCL_RT_VALIDATION_API "Use rt_validation API instead of IGC provided rt_production API" OFF "EMBREE_SYCL_SUPPORT" OFF)
+IF (EMBREE_SYCL_RT_VALIDATION_API)
+  ADD_DEFINITIONS("-DEMBREE_SYCL_RT_VALIDATION_API")
+ENDIF()
+
+CMAKE_DEPENDENT_OPTION(EMBREE_SYCL_IMPLICIT_DISPATCH_GLOBALS "Using L0 allocated Dispatch Globals" ON "EMBREE_SYCL_RT_VALIDATION_API" OFF)
+IF (EMBREE_SYCL_RT_VALIDATION_API AND NOT EMBREE_SYCL_IMPLICIT_DISPATCH_GLOBALS)
+  ADD_DEFINITIONS("-DEMBREE_SYCL_ALLOC_DISPATCH_GLOBALS")
+ENDIF()
+
+MARK_AS_ADVANCED(EMBREE_SYCL_RT_VALIDATION_API)
+MARK_AS_ADVANCED(EMBREE_SYCL_IMPLICIT_DISPATCH_GLOBALS)
+
+IF (EMBREE_SYCL_SUPPORT)
+  SET(EMBREE_SYCL_AOT_DEVICES "none" CACHE STRING "SYCL devices to use for AOT compilation")
+  SET_PROPERTY(CACHE EMBREE_SYCL_AOT_DEVICES PROPERTY STRINGS none dg2 pvc XE_HPG_CORE XE_HPC_CORE)
+  
+  SET(EMBREE_SYCL_AOT_DEVICE_REVISION 0)
+  IF (EMBREE_SYCL_AOT_DEVICES STREQUAL "dg2")
+    SET(EMBREE_SYCL_AOT_DEVICE_REVISION 4)  # FIXME: bug workaround should get removed
+  ENDIF()
+ENDIF()
+
+CMAKE_DEPENDENT_OPTION(EMBREE_SYCL_L0_RTAS_BUILDER "Enable Level Zero RTAS builder" ON "EMBREE_SYCL_SUPPORT" OFF)
+IF (EMBREE_SYCL_L0_RTAS_BUILDER)
+  ADD_DEFINITIONS("-DEMBREE_SYCL_L0_RTAS_BUILDER")
+ENDIF()
+
+OPTION(EMBREE_RAY_MASK "Enables ray mask support." ON)
 OPTION(EMBREE_BACKFACE_CULLING "Enables backface culling.")
+OPTION(EMBREE_BACKFACE_CULLING_CURVES "Enables backface culling for curve primitives." OFF)
+OPTION(EMBREE_BACKFACE_CULLING_SPHERES "Enables backface culling for sphere primitives." OFF)
+
 OPTION(EMBREE_FILTER_FUNCTION "Enables filter functions." ON)
 OPTION(EMBREE_IGNORE_INVALID_RAYS "Ignores invalid rays." OFF) # FIXME: enable by default?
 OPTION(EMBREE_COMPACT_POLYS "Enables double indexed poly layout." OFF)
-
 OPTION(EMBREE_GEOMETRY_TRIANGLE "Enables support for triangle geometries." ON)
 OPTION(EMBREE_GEOMETRY_QUAD "Enables support for quad geometries." ON)
 OPTION(EMBREE_GEOMETRY_CURVE "Enables support for curve geometries." ON)
 OPTION(EMBREE_GEOMETRY_SUBDIVISION "Enables support for subdiv geometries." ON)
 OPTION(EMBREE_GEOMETRY_USER "Enables support for user geometries." ON)
 OPTION(EMBREE_GEOMETRY_INSTANCE "Enables support for instances." ON)
+OPTION(EMBREE_GEOMETRY_INSTANCE_ARRAY "Enables support for instance arrays." ON)
+SET(EMBREE_MAX_INSTANCE_LEVEL_COUNT 1 CACHE STRING "Maximum number of instance levels.")
+
+IF (NOT EMBREE_GEOMETRY_INSTANCE AND NOT EMBREE_GEOMETRY_INSTANCE_ARRAY AND NOT EMBREE_MAX_INSTANCE_LEVEL_COUNT EQUAL 1)
+  message(FATAL_ERROR "EMBREE_MAX_INSTANCE_LEVEL_COUNT must be 1 when EMBREE_GEOMETRY_INSTANCE and EMBREE_GEOMETRY_INSTANCE_ARRAY are disabled")
+ENDIF()
+
 OPTION(EMBREE_GEOMETRY_GRID "Enables support for grid geometries." ON)
 OPTION(EMBREE_GEOMETRY_POINT "Enables support for point geometries." ON)
+
 OPTION(EMBREE_RAY_PACKETS "Enabled support for ray packets." ON)
 
-SET(EMBREE_MAX_INSTANCE_LEVEL_COUNT 1 CACHE STRING "Maximum number of instance levels.")
+
 SET(EMBREE_CURVE_SELF_INTERSECTION_AVOIDANCE_FACTOR 2.0 CACHE STRING "Self intersection avoidance factor for flat curves. Specify floating point value in range 0 to inf.")
+OPTION(EMBREE_DISC_POINT_SELF_INTERSECTION_AVOIDANCE "Enables self intersection avoidance for ray oriented discs." ON)
 OPTION(EMBREE_MIN_WIDTH "Enables min-width feature to enlarge curve and point thickness to pixel width." OFF)
 
 ##############################################################
 # Platform detection and defaults
 ##############################################################
 
-IF (APPLE)
-  IF (CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND (CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64" OR CMAKE_OSX_ARCHITECTURES MATCHES "arm64"))
-    MESSAGE(STATUS "Building for Apple silicon")
-    SET(EMBREE_ARM ON)
-  ENDIF()
+# detect ARM compilation
+IF (APPLE AND CMAKE_SYSTEM_NAME STREQUAL "Darwin" AND (CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64" AND CMAKE_OSX_ARCHITECTURES STREQUAL "") OR ("arm64" IN_LIST CMAKE_OSX_ARCHITECTURES))
+  MESSAGE(STATUS "Building for Apple silicon")
+  SET(EMBREE_ARM ON)
+ELSEIF(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "ARM64")
+  MESSAGE(STATUS "Building for AArch64")
+  SET(EMBREE_ARM ON)
 ENDIF()
 
 SET(EMBREE_TASKING_SYSTEM "TBB" CACHE STRING "Selects tasking system")
@@ -199,8 +275,27 @@ ENDIF()
 ##############################################################
 # Compiler
 ##############################################################
-
+# TODO: fixme, define relwithassert also for icc, msvc, ... or remove when debug build with dpcpp is useable
+IF(EMBREE_SYCL_SUPPORT)
+  SET(CONFIGURATION_TYPES "Debug;Release;RelWithDebInfo;RelWithAssert")
+ELSE()
 SET(CONFIGURATION_TYPES "Debug;Release;RelWithDebInfo")
+ENDIF()
+
+# Validate build type
+IF (CMAKE_BUILD_TYPE)
+  string(FIND "${CONFIGURATION_TYPES}" "${CMAKE_BUILD_TYPE}" MATCHED_CONFIG)
+  IF (${MATCHED_CONFIG} EQUAL -1)
+    message(FATAL_ERROR "CMAKE_BUILD_TYPE (${CMAKE_BUILD_TYPE}) allows only the following values: ${CONFIGURATION_TYPES}")
+  ENDIF()
+ENDIF()
+
+message(DEBUG "CMAKE_GENERATOR_TOOLSET: ${CMAKE_GENERATOR_TOOLSET}")
+message(DEBUG "CMAKE_CXX_COMPILER_ID: ${CMAKE_CXX_COMPILER_ID}")
+message(DEBUG "CMAKE_CXX_COMPILER: ${CMAKE_CXX_COMPILER}")
+
+include(CheckCXXCompilerFlag)
+check_cxx_compiler_flag(-fsycl COMPILER_HAS_SYCL_SUPPORT)
 
 IF (WIN32)
   IF (NOT DEFAULT_CMAKE_CONFIGURATION_TYPES_SET)
@@ -209,25 +304,24 @@ IF (WIN32)
   ENDIF()
   SET_PROPERTY(GLOBAL PROPERTY USE_FOLDERS ON)
 
-  #message ("CMAKE_GENERATOR_TOOLSET: ${CMAKE_GENERATOR_TOOLSET}")
-  #message ("CMAKE_CXX_COMPILER_ID: ${CMAKE_CXX_COMPILER_ID}")
-  #message ("CMAKE_CXX_COMPILER: ${CMAKE_CXX_COMPILER}")
-
-  IF (${CMAKE_CXX_COMPILER} MATCHES ".*dpcpp")
-    message(FATAL_ERROR "DPCPP compiler not supported on Windows yet. Use ICX instead.")
-  ENDIF()
-
-  IF (${CMAKE_CXX_COMPILER_ID} MATCHES "IntelLLVM" OR
-      (${CMAKE_CXX_COMPILER_ID} MATCHES "Clang" AND ${CMAKE_CXX_COMPILER} MATCHES ".*icx"))
-    MESSAGE("-- DPCPP detected")
+  IF ((${CMAKE_CXX_COMPILER_ID} MATCHES "IntelLLVM") OR
+      (${CMAKE_CXX_COMPILER_ID} MATCHES "Clang" AND COMPILER_HAS_SYCL_SUPPORT))
+    MESSAGE("-- DPCPP compiler detected")
     INCLUDE(dpcpp)
   ELSEIF(${CMAKE_GENERATOR_TOOLSET} MATCHES "^LLVM")
-    MESSAGE("-- CLANG detected")
+    set(EMBREE_SYCL_SUPPORT OFF)
+    MESSAGE("-- CLANG compiler detected")
     INCLUDE(clang)
   ELSEIF(${CMAKE_GENERATOR_TOOLSET} MATCHES "^Intel")
-    MESSAGE("-- Intel Compiler detected")
+    set(EMBREE_SYCL_SUPPORT OFF)
+    MESSAGE("-- Intel compiler detected")
     INCLUDE (intel)
+  ELSEIF(${CMAKE_CXX_COMPILER_FRONTEND_VARIANT} MATCHES "GNU")
+    set(EMBREE_SYCL_SUPPORT OFF)
+    MESSAGE("-- GNU-like compiler detected")
+    INCLUDE(gnu)
   ELSE()
+    set(EMBREE_SYCL_SUPPORT OFF)
     IF (EMBREE_ISA_AVX512)
       MESSAGE(FATAL_ERROR "Microsoft Visual C++ Compiler does not support AVX512. Please use Intel Compiler or Clang.")
     ENDIF()
@@ -249,6 +343,9 @@ ELSE (WIN32)
     ENDIF()
     IF(${_LOWER_CXX_COMPILER_ID} MATCHES "clang" AND ${CXX_COMPILER_NAME} MATCHES "dpcpp")
       STRING(REPLACE "clang" "dpcpp" _LOWER_CXX_COMPILER_ID ${_LOWER_CXX_COMPILER_ID})
+    ENDIF()
+    IF (EMBREE_SYCL_SUPPORT)
+      SET(_LOWER_CXX_COMPILER_ID "dpcpp")
     ENDIF()
     STRING(TOUPPER "${_LOWER_CXX_COMPILER_ID}" _UPPER_CXX_COMPILER_ID)
     MESSAGE("-- ${_UPPER_CXX_COMPILER_ID} detected")
@@ -276,11 +373,6 @@ ENDIF (WIN32)
 IF(DEFINED EMBREE_ISA_AVX512SKX)
   UNSET(EMBREE_ISA_AVX512 CACHE)
   SET(EMBREE_ISA_AVX512 ${EMBREE_ISA_AVX512SKX} CACHE BOOL "")
-ENDIF()
-
-TRY_COMPILE(COMPILER_SUPPORTS_ARM_NEON "${CMAKE_BINARY_DIR}" "${PROJECT_SOURCE_DIR}/common/cmake/check_arm_neon.cpp")
-IF (COMPILER_SUPPORTS_ARM_NEON)
-  SET(EMBREE_ARM ON)
 ENDIF()
 
 IF (CMAKE_CXX_COMPILER_WRAPPER STREQUAL "CrayPrgEnv")
@@ -321,6 +413,9 @@ IF (EMBREE_MAX_ISA STREQUAL "NONE")
     ELSE()
       OPTION(EMBREE_ISA_AVX512 "Enables AVX512 ISA." ${COMPILER_SUPPORTS_AVX512})
     ENDIF()
+    # Don't use OPTION, but still set them to OFF, so that embree-config.cmake is consisten with its definitions
+    SET(EMBREE_ISA_NEON   OFF)
+    SET(EMBREE_ISA_NEON2X OFF)
   ENDIF()
 
 ELSEIF (EMBREE_MAX_ISA STREQUAL "DEFAULT")
@@ -555,11 +650,13 @@ include(package)
 CONFIGURE_FILE(
   "${PROJECT_SOURCE_DIR}/kernels/config.h.in"
   "${PROJECT_SOURCE_DIR}/kernels/config.h"
-)
+  )
+
+INCLUDE_DIRECTORIES(${PROJECT_BINARY_DIR})
 
 CONFIGURE_FILE(
   "${PROJECT_SOURCE_DIR}/kernels/rtcore_config.h.in"
-  "${PROJECT_SOURCE_DIR}/include/embree3/rtcore_config.h"
+  "${PROJECT_SOURCE_DIR}/include/embree4/rtcore_config.h"
 )
 
 CONFIGURE_FILE(
@@ -589,6 +686,8 @@ SET(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}")
 
 ADD_SUBDIRECTORY(common)
 ADD_SUBDIRECTORY(kernels)
+ADD_SUBDIRECTORY(tests)
+
 IF (EMBREE_TUTORIALS)
   ADD_SUBDIRECTORY(tutorials)
 ENDIF()

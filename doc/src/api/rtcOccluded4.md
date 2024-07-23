@@ -1,4 +1,4 @@
-% rtcOccluded4/8/16(3) | Embree Ray Tracing Kernels 3
+% rtcOccluded4/8/16(3) | Embree Ray Tracing Kernels 4
 
 #### NAME
 
@@ -6,50 +6,46 @@
 
 #### SYNOPSIS
 
-    #include <embree3/rtcore.h>
+    #include <embree4/rtcore.h>
 
     void rtcOccluded4(
       const int* valid,
       RTCScene scene,
-      struct RTCIntersectContext* context,
-      struct RTCRay4* ray
+      struct RTCRay4* ray,
+      struct RTCOccludedArguments* args = NULL
     );
 
     void rtcOccluded8(
       const int* valid,
       RTCScene scene,
-      struct RTCIntersectContext* context,
-      struct RTCRay8* ray
+      struct RTCRay8* ray,
+      struct RTCOccludedArguments* args = NULL
     );
 
     void rtcOccluded16(
       const int* valid,
       RTCScene scene,
-      struct RTCIntersectContext* context,
-      struct RTCRay16* ray
+      struct RTCRay16* ray,
+      struct RTCOccludedArguments* args = NULL
     );
 
 #### DESCRIPTION
 
 The `rtcOccluded4/8/16` functions checks for each active ray of the
 ray packet of size 4, 8, or 16 (`ray` argument) whether there is any
-hit with the scene (`scene` argument). See Section [rtcOccluded1] for
-a description of how to set up and trace occlusion rays.
+hit with the scene (`scene` argument). The passed optional arguments
+struct (`args` argument) can get used for advanced use cases, see
+section [rtcInitOccludedArguments] for more details. See Section
+[rtcOccluded1] for more details and a description of how to set up and
+trace occlusion rays.
 
 A ray valid mask must be provided (`valid` argument) which stores
 one 32-bit integer (`-1` means valid and `0` invalid) per ray in the
 packet. Only active rays are processed, and hit data of inactive rays
 is not changed.
 
-``` {include=src/api/inc/context.md}
-```
-
 ``` {include=src/api/inc/raypointer.md}
 ```
-
-The implementation of these functions is guaranteed to invoke callback
-functions always with the same ray packet size and ordering of rays as
-specified initially.
 
 For `rtcOccluded4` the ray packet must be aligned to 16 bytes, for
 `rtcOccluded8` the alignment must be 32 bytes, and for `rtcOccluded16`
@@ -73,4 +69,4 @@ thus will not set any error flags on failure.
 
 #### SEE ALSO
 
-[rtcOccluded4/8/16]
+[rtcOccluded1], [rtcIntersect4/8/16], [rtcInitOccludedArguments]

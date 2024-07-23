@@ -1,102 +1,91 @@
 // Copyright 2009-2021 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
-#include "../common/tutorial/tutorial_device.h"
+#include "curve_geometry_device.h"
 #include "../common/tutorial/optics.h"
 
 namespace embree {
 
+/* all features required by this tutorial */
+#define FEATURE_MASK \
+  RTC_FEATURE_FLAG_TRIANGLE | \
+  RTC_FEATURE_FLAG_CONE_LINEAR_CURVE | \
+  RTC_FEATURE_FLAG_ROUND_LINEAR_CURVE | \
+  RTC_FEATURE_FLAG_FLAT_BSPLINE_CURVE | \
+  RTC_FEATURE_FLAG_ROUND_BSPLINE_CURVE | \
+  RTC_FEATURE_FLAG_NORMAL_ORIENTED_BSPLINE_CURVE | \
+  RTC_FEATURE_FLAG_FLAT_LINEAR_CURVE | \
+  RTC_FEATURE_FLAG_FLAT_CATMULL_ROM_CURVE | \
+  RTC_FEATURE_FLAG_ROUND_CATMULL_ROM_CURVE | \
+  RTC_FEATURE_FLAG_NORMAL_ORIENTED_CATMULL_ROM_CURVE
+  
 /* scene data */
 RTCScene  g_scene  = nullptr;
+TutorialData data;
 
-#define NUM_VERTICES 9
-#define NUM_CURVES 6
-
-#define W 2.0f
-
-float hair_vertices[NUM_VERTICES][4] =
+Vec3fa interpolate_linear(const TutorialData& data, unsigned int primID, float u)
 {
-  { -1.0f, 0.0f, -   W, 0.2f },
+  const Vec3fa c0 = ((Vec3fa*) data.hair_vertex_colors)[primID+1];
+  const Vec3fa c1 = ((Vec3fa*) data.hair_vertex_colors)[primID+2];
+  return Vec3fa(c0*(1.0f-u) + c1*u);
+}
 
-  { +0.0f,-1.0f, +0.0f, 0.2f },
-  { +1.0f, 0.0f, +   W, 0.2f },
-  { -1.0f, 0.0f, +   W, 0.2f },
-  { +0.0f,+1.0f, +0.0f, 0.6f },
-  { +1.0f, 0.0f, -   W, 0.2f },
-  { -1.0f, 0.0f, -   W, 0.2f },
-
-  { +0.0f,-1.0f, +0.0f, 0.2f },
-  { +1.0f, 0.0f, +   W, 0.2f },
-};
-
-float hair_normals[NUM_VERTICES][4] =
+Vec3fa interpolate_bspline(const TutorialData& data, unsigned int primID, float u)
 {
-  { -1.0f,  0.0f, 0.0f, 0.0f },
+  const Vec3fa c0 = ((Vec3fa*) data.hair_vertex_colors)[primID+0];
+  const Vec3fa c1 = ((Vec3fa*) data.hair_vertex_colors)[primID+1];
+  const Vec3fa c2 = ((Vec3fa*) data.hair_vertex_colors)[primID+2];
+  const Vec3fa c3 = ((Vec3fa*) data.hair_vertex_colors)[primID+3];
+  const float t  = u;
+  const float s  = 1.0f - u;
+  const float n0 = s*s*s;
+  const float n1 = (4.0f*(s*s*s)+(t*t*t)) + (12.0f*((s*t)*s) + 6.0f*((t*s)*t));
+  const float n2 = (4.0f*(t*t*t)+(s*s*s)) + (12.0f*((t*s)*t) + 6.0f*((s*t)*s));
+  const float n3 = t*t*t;
+  return Vec3fa((1.0f/6.0f)*(n0*c0 + n1*c1 + n2*c2 + n3*c3));
+}
 
-  {  0.0f, +1.0f, 0.0f, 0.0f },
-  { +1.0f,  0.0f, 0.0f, 0.0f },
-  {  0.0f, -1.0f, 0.0f, 0.0f },
-  { -1.0f,  0.0f, 0.0f, 0.0f },
-  {  0.0f, +1.0f, 0.0f, 0.0f },
-  { +1.0f,  0.0f, 0.0f, 0.0f },
-
-  {  0.0f, -1.0f, 0.0f, 0.0f },
-  { -1.0f,  0.0f, 0.0f, 0.0f },
-};
-
-float hair_vertex_colors[NUM_VERTICES][4] =
+Vec3fa interpolate_catmull_rom(const TutorialData& data, unsigned int primID, float u)
 {
-  {  1.0f,  1.0f,  0.0f, 0.0f },
-
-  {  1.0f,  0.0f,  0.0f, 0.0f },
-  {  1.0f,  1.0f,  0.0f, 0.0f },
-  {  0.0f,  0.0f,  1.0f, 0.0f },
-  {  1.0f,  1.0f,  1.0f, 0.0f },
-  {  1.0f,  0.0f,  0.0f, 0.0f },
-  {  1.0f,  1.0f,  0.0f, 0.0f },
-
-  {  1.0f,  0.0f,  0.0f, 0.0f },
-  {  1.0f,  1.0f,  0.0f, 0.0f },
-};
-
-unsigned int hair_indices[NUM_CURVES] = {
-  0, 1, 2, 3, 4, 5
-};
-
-unsigned int hair_indices_linear[NUM_CURVES] = {
-  1, 2, 3, 4, 5, 6
-};
-
-char hair_flags_linear[NUM_CURVES] = {
-  0x3, 0x3, 0x3, 0x3, 0x3, 0x3
-};
+  const Vec3fa c0 = ((Vec3fa*) data.hair_vertex_colors)[primID+0];
+  const Vec3fa c1 = ((Vec3fa*) data.hair_vertex_colors)[primID+1];
+  const Vec3fa c2 = ((Vec3fa*) data.hair_vertex_colors)[primID+2];
+  const Vec3fa c3 = ((Vec3fa*) data.hair_vertex_colors)[primID+3];
+  const float t  = u;
+  const float s  = 1.0f - u;
+  const float n0 = - t * s * s;
+  const float n1 = 2.0f + t * t * (3.0f * t - 5.0f);
+  const float n2 = 2.0f + s * s * (3.0f * s - 5.0f);
+  const float n3 = - s * t * t;
+  return Vec3fa(0.5f*(n0*c0 + n1*c1 + n2*c2 + n3*c3));
+}
 
 /* add hair geometry */
 unsigned int addCurve (RTCScene scene, RTCGeometryType gtype, const Vec4f& pos)
 {
   RTCGeometry geom = rtcNewGeometry (g_device, gtype);
   rtcSetGeometryVertexAttributeCount(geom,1);
-
+  
   if (gtype == RTC_GEOMETRY_TYPE_FLAT_LINEAR_CURVE || gtype == RTC_GEOMETRY_TYPE_ROUND_LINEAR_CURVE || gtype == RTC_GEOMETRY_TYPE_CONE_LINEAR_CURVE)
-    rtcSetSharedGeometryBuffer(geom,RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT,   hair_indices_linear,0, sizeof(unsigned int), NUM_CURVES);
+    rtcSetSharedGeometryBuffer(geom,RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT,   data.hair_indices_linear,0, sizeof(unsigned int), NUM_CURVES);
   else
-    rtcSetSharedGeometryBuffer(geom,RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT,   hair_indices,       0, sizeof(unsigned int), NUM_CURVES);
-      
+    rtcSetSharedGeometryBuffer(geom,RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT,   data.hair_indices,       0, sizeof(unsigned int), NUM_CURVES);
+  
   Vec4f* verts = (Vec4f*)rtcSetNewGeometryBuffer(geom, RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT4, sizeof(Vec4f), NUM_VERTICES);
   for (int i = 0; i < NUM_VERTICES; i++) {
-    verts[i] = pos + Vec4f(hair_vertices[i][0],hair_vertices[i][1], hair_vertices[i][2], hair_vertices[i][3]);
+    verts[i] = pos + data.hair_vertices[i];
   }
   if (gtype == RTC_GEOMETRY_TYPE_NORMAL_ORIENTED_BEZIER_CURVE ||
       gtype == RTC_GEOMETRY_TYPE_NORMAL_ORIENTED_BSPLINE_CURVE ||
       gtype == RTC_GEOMETRY_TYPE_NORMAL_ORIENTED_CATMULL_ROM_CURVE) {
-    rtcSetSharedGeometryBuffer(geom, RTC_BUFFER_TYPE_NORMAL, 0, RTC_FORMAT_FLOAT3, hair_normals, 0, sizeof(Vec3fa), NUM_VERTICES);
+    rtcSetSharedGeometryBuffer(geom, RTC_BUFFER_TYPE_NORMAL, 0, RTC_FORMAT_FLOAT3, data.hair_normals, 0, sizeof(Vec3fa), NUM_VERTICES);
   }
   
   if (gtype == RTC_GEOMETRY_TYPE_ROUND_LINEAR_CURVE || gtype == RTC_GEOMETRY_TYPE_CONE_LINEAR_CURVE) {
-    rtcSetSharedGeometryBuffer(geom, RTC_BUFFER_TYPE_FLAGS, 0, RTC_FORMAT_UCHAR, hair_flags_linear, 0, sizeof(char), NUM_CURVES);
+    rtcSetSharedGeometryBuffer(geom, RTC_BUFFER_TYPE_FLAGS, 0, RTC_FORMAT_UCHAR, data.hair_flags_linear, 0, sizeof(char), NUM_CURVES);
   }
 
-  rtcSetSharedGeometryBuffer(geom,RTC_BUFFER_TYPE_VERTEX_ATTRIBUTE, 0, RTC_FORMAT_FLOAT3, hair_vertex_colors, 0, sizeof(Vec3fa),       NUM_VERTICES);
+  rtcSetSharedGeometryBuffer(geom,RTC_BUFFER_TYPE_VERTEX_ATTRIBUTE, 0, RTC_FORMAT_FLOAT3, data.hair_vertex_colors, 0, sizeof(Vec3fa),       NUM_VERTICES);
   rtcCommitGeometry(geom);
   unsigned int geomID = rtcAttachGeometry(scene,geom);
   rtcReleaseGeometry(geom);
@@ -131,38 +120,45 @@ unsigned int addGroundPlane (RTCScene scene_i)
 extern "C" void device_init (char* cfg)
 {
   /* create scene */
-  g_scene = rtcNewScene(g_device);
+  TutorialData_Constructor(&data);
+  g_scene = data.g_scene = rtcNewScene(g_device);
 
   /* add ground plane */
-  addGroundPlane(g_scene);
+  addGroundPlane(data.g_scene);
 
   /* add curves */
-  addCurve(g_scene, RTC_GEOMETRY_TYPE_CONE_LINEAR_CURVE, Vec4f(-5.5f, 0.0f, 3.f, 0.0f));
-  addCurve(g_scene, RTC_GEOMETRY_TYPE_ROUND_LINEAR_CURVE, Vec4f(-2.5f, 0.0f, 3.f, 0.0f));
-  addCurve(g_scene, RTC_GEOMETRY_TYPE_FLAT_BSPLINE_CURVE, Vec4f(0.5f, 0.0f, 3.f, 0.0f));
-  addCurve(g_scene, RTC_GEOMETRY_TYPE_ROUND_BSPLINE_CURVE, Vec4f(3.5f, 0.0f, 3.f, 0.0f));
-  addCurve(g_scene, RTC_GEOMETRY_TYPE_NORMAL_ORIENTED_BSPLINE_CURVE, Vec4f(+6.0f, 0.0f, 3.f, 0.0f));
+  addCurve(data.g_scene, RTC_GEOMETRY_TYPE_CONE_LINEAR_CURVE, Vec4f(-5.5f, 0.0f, 3.f, 0.0f));
+  addCurve(data.g_scene, RTC_GEOMETRY_TYPE_ROUND_LINEAR_CURVE, Vec4f(-2.5f, 0.0f, 3.f, 0.0f));
+  addCurve(data.g_scene, RTC_GEOMETRY_TYPE_FLAT_BSPLINE_CURVE, Vec4f(0.5f, 0.0f, 3.f, 0.0f));
+  addCurve(data.g_scene, RTC_GEOMETRY_TYPE_ROUND_BSPLINE_CURVE, Vec4f(3.5f, 0.0f, 3.f, 0.0f));
+  addCurve(data.g_scene, RTC_GEOMETRY_TYPE_NORMAL_ORIENTED_BSPLINE_CURVE, Vec4f(+6.0f, 0.0f, 3.f, 0.0f));
 
-  addCurve(g_scene, RTC_GEOMETRY_TYPE_FLAT_LINEAR_CURVE, Vec4f(-4.5f, 0.0f, -2.f, 0.0f));
-  addCurve(g_scene, RTC_GEOMETRY_TYPE_FLAT_CATMULL_ROM_CURVE, Vec4f(-1.5f, 0.0f, -2.f, 0.0f));
-  addCurve(g_scene, RTC_GEOMETRY_TYPE_ROUND_CATMULL_ROM_CURVE, Vec4f(1.5f, 0.0f, -2.f, 0.0f));
-  addCurve(g_scene, RTC_GEOMETRY_TYPE_NORMAL_ORIENTED_CATMULL_ROM_CURVE, Vec4f(+4.5f, 0.0f, -2.f, 0.0f));
+  addCurve(data.g_scene, RTC_GEOMETRY_TYPE_FLAT_LINEAR_CURVE, Vec4f(-4.5f, 0.0f, -2.f, 0.0f));
+  addCurve(data.g_scene, RTC_GEOMETRY_TYPE_FLAT_CATMULL_ROM_CURVE, Vec4f(-1.5f, 0.0f, -2.f, 0.0f));
+  addCurve(data.g_scene, RTC_GEOMETRY_TYPE_ROUND_CATMULL_ROM_CURVE, Vec4f(1.5f, 0.0f, -2.f, 0.0f));
+  addCurve(data.g_scene, RTC_GEOMETRY_TYPE_NORMAL_ORIENTED_CATMULL_ROM_CURVE, Vec4f(+4.5f, 0.0f, -2.f, 0.0f));
 
   /* commit changes to scene */
-  rtcCommitScene (g_scene);
+  rtcCommitScene (data.g_scene);
 }
 
 /* task that renders a single screen tile */
-Vec3fa renderPixelStandard(float x, float y, const ISPCCamera& camera, RayStats& stats)
+void renderPixelStandard(const TutorialData& data,
+                         int x, int y, 
+                         int* pixels,
+                         const unsigned int width,
+                         const unsigned int height,
+                         const float time,
+                         const ISPCCamera& camera, RayStats& stats)
 {
-  RTCIntersectContext context;
-  rtcInitIntersectContext(&context);
-  
   /* initialize ray */
   Ray ray(Vec3fa(camera.xfm.p), Vec3fa(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)), 0.0f, inf);
 
   /* intersect ray with scene */
-  rtcIntersect1(g_scene,&context,RTCRayHit_(ray));
+  RTCIntersectArguments iargs;
+  rtcInitIntersectArguments(&iargs);
+  iargs.feature_mask = (RTCFeatureFlags) (FEATURE_MASK);
+  rtcIntersect1(data.g_scene,RTCRayHit_(ray),&iargs);
   RayStats_addRay(stats);
 
   /* shade pixels */
@@ -173,9 +169,12 @@ Vec3fa renderPixelStandard(float x, float y, const ISPCCamera& camera, RayStats&
     Vec3fa diffuse = Vec3fa(1.0f,0.0f,0.0f);
     if (ray.geomID > 0)
     {
-      auto geomID = ray.geomID; {
-        rtcInterpolate0(rtcGetGeometry(g_scene,geomID),ray.primID,ray.u,ray.v,RTC_BUFFER_TYPE_VERTEX_ATTRIBUTE,0,&diffuse.x,3);
+      switch (ray.geomID) {
+      case 1: case 2: case 6: diffuse = interpolate_linear(data,ray.primID,ray.u); break;
+      case 3: case 4: case 5: diffuse = interpolate_bspline(data,ray.primID,ray.u); break;
+      case 7: case 8: case 9: diffuse = interpolate_catmull_rom(data,ray.primID,ray.u); break;
       }
+
       diffuse = 0.5f*diffuse;
     }
 
@@ -188,7 +187,10 @@ Vec3fa renderPixelStandard(float x, float y, const ISPCCamera& camera, RayStats&
     Ray shadow(ray.org + ray.tfar*ray.dir, neg(lightDir), 0.001f, inf, 0.0f);
 
     /* trace shadow ray */
-    rtcOccluded1(g_scene,&context,RTCRay_(shadow));
+    RTCOccludedArguments sargs;
+    rtcInitOccludedArguments(&sargs);
+    sargs.feature_mask = (RTCFeatureFlags) (FEATURE_MASK);
+    rtcOccluded1(data.g_scene,RTCRay_(shadow),&sargs);
     RayStats_addShadowRay(stats);
 
     /* add light contribution */
@@ -199,7 +201,12 @@ Vec3fa renderPixelStandard(float x, float y, const ISPCCamera& camera, RayStats&
       color = color + diffuse*d + 0.5f*Vec3fa(s);
     }
   }
-  return color;
+
+  /* write color to framebuffer */
+  unsigned int r = (unsigned int) (255.0f * clamp(color.x,0.0f,1.0f));
+  unsigned int g = (unsigned int) (255.0f * clamp(color.y,0.0f,1.0f));
+  unsigned int b = (unsigned int) (255.0f * clamp(color.z,0.0f,1.0f));
+  pixels[y*width+x] = (b << 16) + (g << 8) + r;
 }
 
 /* renders a single screen tile */
@@ -222,14 +229,7 @@ void renderTileStandard(int taskIndex,
 
   for (unsigned int y=y0; y<y1; y++) for (unsigned int x=x0; x<x1; x++)
   {
-    /* calculate pixel color */
-    Vec3fa color = renderPixelStandard((float)x,(float)y,camera,g_stats[threadIndex]);
-
-    /* write color to framebuffer */
-    unsigned int r = (unsigned int) (255.0f * clamp(color.x,0.0f,1.0f));
-    unsigned int g = (unsigned int) (255.0f * clamp(color.y,0.0f,1.0f));
-    unsigned int b = (unsigned int) (255.0f * clamp(color.z,0.0f,1.0f));
-    pixels[y*width+x] = (b << 16) + (g << 8) + r;
+    renderPixelStandard(data,x,y,pixels,width,height,time,camera,g_stats[threadIndex]);
   }
 }
 
@@ -251,6 +251,25 @@ extern "C" void renderFrameStandard (int* pixels,
                           const float time,
                           const ISPCCamera& camera)
 {
+#if defined(EMBREE_SYCL_TUTORIAL) && !defined(EMBREE_SYCL_RT_SIMULATION)
+  TutorialData ldata = data;
+  sycl::event event = global_gpu_queue->submit([=](sycl::handler& cgh){
+    const sycl::nd_range<2> nd_range = make_nd_range(height,width);
+    cgh.parallel_for(nd_range,[=](sycl::nd_item<2> item) {
+      const unsigned int x = item.get_global_id(1); if (x >= width ) return;
+      const unsigned int y = item.get_global_id(0); if (y >= height) return;
+      RayStats stats;
+      renderPixelStandard(ldata,x,y,pixels,width,height,time,camera,stats);
+    });
+  });
+  global_gpu_queue->wait_and_throw();
+
+  const auto t0 = event.template get_profiling_info<sycl::info::event_profiling::command_start>();
+  const auto t1 = event.template get_profiling_info<sycl::info::event_profiling::command_end>();
+  const double dt = (t1-t0)*1E-9;
+  ((ISPCCamera*)&camera)->render_time = dt;
+  
+#else
   const int numTilesX = (width +TILE_SIZE_X-1)/TILE_SIZE_X;
   const int numTilesY = (height+TILE_SIZE_Y-1)/TILE_SIZE_Y;
   parallel_for(size_t(0),size_t(numTilesX*numTilesY),[&](const range<size_t>& range) {
@@ -258,6 +277,7 @@ extern "C" void renderFrameStandard (int* pixels,
     for (size_t i=range.begin(); i<range.end(); i++)
       renderTileTask((int)i,threadIndex,pixels,width,height,time,camera,numTilesX,numTilesY);
   }); 
+#endif
 }
 
 /* called by the C++ code to render */
@@ -272,7 +292,8 @@ extern "C" void device_render (int* pixels,
 /* called by the C++ code for cleanup */
 extern "C" void device_cleanup ()
 {
-  rtcReleaseScene (g_scene); g_scene = nullptr;
+  rtcReleaseScene (data.g_scene); data.g_scene = nullptr;
+  TutorialData_Destructor(&data);
 }
 
 } // namespace embree

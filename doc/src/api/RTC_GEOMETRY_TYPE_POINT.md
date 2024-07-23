@@ -1,4 +1,4 @@
-% RTC_GEOMETRY_TYPE_*_POINT(3) | Embree Ray Tracing Kernels 3
+% RTC_GEOMETRY_TYPE_*_POINT(3) | Embree Ray Tracing Kernels 4
 
 #### NAME
 
@@ -13,7 +13,7 @@
 
 #### SYNOPSIS
 
-    #include <embree3/rtcore.h>
+    #include <embree4/rtcore.h>
 
     rtcNewGeometry(device, RTC_GEOMETRY_TYPE_SPHERE_POINT);
     rtcNewGeometry(device, RTC_GEOMETRY_TYPE_DISC_POINT);

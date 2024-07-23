@@ -13,9 +13,7 @@
 struct Vertex   { float x,y,z,r;  }; // FIXME: rename to Vertex4f
 struct Triangle { int v0, v1, v2; };
 
-/* include embree API */
-#include "../../../include/embree3/rtcore.isph"
-RTC_NAMESPACE_USE
+#include "../device_default.isph"
 
 /* include optional vector library */
 #include "../math/math.isph"
@@ -29,27 +27,61 @@ RTC_NAMESPACE_USE
 #include "../../../common/algorithms/parallel_for.h"
 #endif
 
-enum Mode {
-  MODE_NORMAL = 0,
-  MODE_STREAM = 1
+#if defined(EMBREE_SYCL_TUTORIAL)
+inline sycl::nd_range<2> make_nd_range(unsigned int size0, unsigned int size1)
+{
+  const sycl::range<2> wg_size = sycl::range<2>(4,4);
+
+  /* align iteration space to work group size */
+  size0 = ((size0 + wg_size[0] - 1) / wg_size[0]) * wg_size[0];
+  size1 = ((size1 + wg_size[1] - 1) / wg_size[1]) * wg_size[1];
+
+  return sycl::nd_range(sycl::range(size0,size1),wg_size);
+}
+#endif
+
+enum Shader { 
+  SHADER_DEFAULT, 
+  SHADER_EYELIGHT,
+  SHADER_OCCLUSION,
+  SHADER_UV,
+  SHADER_TEXCOORDS,
+  SHADER_TEXCOORDS_GRID,
+  SHADER_NG,
+  SHADER_CYCLES,
+  SHADER_GEOMID,
+  SHADER_GEOMID_PRIMID,
+  SHADER_AO
 };
 
 extern RTCDevice g_device;
-extern uniform Mode g_mode;
-extern uniform RTCIntersectContextFlags g_iflags_coherent;
-extern uniform RTCIntersectContextFlags g_iflags_incoherent;
+extern uniform RTCRayQueryFlags g_iflags_coherent;
+extern uniform RTCRayQueryFlags g_iflags_incoherent;
+extern uniform Shader shader;
 
 /* error reporting function */
 unmasked void error_handler(void* uniform userPtr, uniform RTCError code, const uniform int8* uniform str = NULL);
 
 /* returns time stamp counter */
+#if defined(EMBREE_SYCL_SUPPORT) && defined(__SYCL_DEVICE_ONLY__)
+inline int64 get_tsc() { return 0; }
+#else
 extern "C" uniform int64 get_tsc();
+#endif
 
+#if defined(__WIN32__) && defined(__INTEL_LLVM_COMPILER)
+/* declare some standard library functions */
+extern "C" __declspec(dllimport) void abort ();
+extern "C" __declspec(dllimport) void exit(int);
+extern "C" __declspec(dllimport) int puts ( const char* str );
+extern "C" __declspec(dllimport) int putchar ( int character );
+#else
 /* declare some standard library functions */
 extern "C" void abort ();
 extern "C" void exit(uniform int);
 extern "C" uniform int puts ( const uniform int8* uniform str );
 extern "C" uniform int putchar ( uniform int character );
+#endif
 
 /* face forward for shading normals */
 inline Vec3f faceforward( const Vec3f& N, const Vec3f& I, const Vec3f& Ng ) {
@@ -94,10 +126,9 @@ extern "C" unmasked void progressStart();
 extern "C" unmasked uniform bool progressMonitor(void* uniform ptr, const uniform double n);
 extern "C" unmasked void progressEnd();
 
-Vec2f  getTextureCoordinatesSubdivMesh(void* uniform mesh, const unsigned int primID, const float u, const float v);
-
-float  getTextureTexel1f(const uniform Texture* uniform texture, float u, float v);
-Vec3f  getTextureTexel3f(const uniform Texture* uniform texture, float u, float v);
+SYCL_EXTERNAL Vec2f  getTextureCoordinatesSubdivMesh(void* uniform mesh, const unsigned int primID, const float u, const float v);
+SYCL_EXTERNAL float  getTextureTexel1f(const uniform Texture* uniform texture, float u, float v);
+SYCL_EXTERNAL Vec3f  getTextureTexel3f(const uniform Texture* uniform texture, float u, float v);
 
 enum ISPCInstancingMode { ISPC_INSTANCING_NONE, ISPC_INSTANCING_GEOMETRY, ISPC_INSTANCING_GROUP };
 

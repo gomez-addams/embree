@@ -373,9 +373,7 @@ Vec3fa renderPixelStandard(float x, float y, const ISPCCamera& camera)
   ray.time() = 0.0f;
 
   /* intersect ray with scene */
-  RTCIntersectContext context;
-  rtcInitIntersectContext(&context);
-  rtcIntersect1(g_scene,&context,RTCRayHit_(ray));
+  rtcIntersect1(g_scene,RTCRayHit_(ray));
 
   /* shade background black */
   if (ray.geomID == RTC_INVALID_GEOMETRY_ID) {
@@ -480,7 +478,6 @@ extern "C" void device_render (int* pixels,
 
   if (benchmark && cur_time == 128) {
     std::cout << "collision time = " << 1000.0f*total_collision_time << " ms" << std::endl;
-    exit(0);
   }
 }
 

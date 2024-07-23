@@ -21,6 +21,9 @@ struct Ray1
   uniform int primID;    //!< primitive ID
   uniform int geomID;    //!< geometry ID
   uniform int instID[RTC_MAX_INSTANCE_LEVEL_COUNT];    //!< instance ID
+#if defined(RTC_GEOMETRY_INSTANCE_ARRAY)
+  uniform int instPrimID[RTC_MAX_INSTANCE_LEVEL_COUNT];    //!< instance ID
+#endif
   varying int align[0];  //!< aligns ray on stack to at least 16 bytes
 };
 
@@ -48,6 +51,9 @@ struct Ray
   int primID;    //!< primitive ID
   int geomID;    //!< geometry ID
   int instID[RTC_MAX_INSTANCE_LEVEL_COUNT];    //!< instance ID
+#if defined(RTC_GEOMETRY_INSTANCE_ARRAY)
+  int instPrimID[RTC_MAX_INSTANCE_LEVEL_COUNT];    //!< instance ID
+#endif
 };
 
 inline varying RTCRayHit* uniform RTCRayHit_(varying Ray& ray)
@@ -85,10 +91,13 @@ inline Ray make_Ray(const Vec3f org,
   ray.dir   = dir;  
   ray.time  = time;
   ray.tfar  = tfar;
-  ray.mask  = -1;
+  ray.mask  = mask;
   ray.geomID = geomID;
   ray.primID = primID;
   ray.instID[0] = RTC_INVALID_GEOMETRY_ID;
+#if defined(RTC_GEOMETRY_INSTANCE_ARRAY)
+  ray.instPrimID[0] = RTC_INVALID_GEOMETRY_ID;
+#endif
   return ray;
 }
 
@@ -107,25 +116,29 @@ inline void init_Ray(Ray &ray,
   ray.dir   = dir;
   ray.time  = time;
   ray.tfar  = tfar;
-  ray.mask  = -1;
+  ray.mask  = mask;
   ray.geomID = geomID;
   ray.primID = primID;
   ray.instID[0] = RTC_INVALID_GEOMETRY_ID;
+#if defined(RTC_GEOMETRY_INSTANCE_ARRAY)
+  ray.instPrimID[0] = RTC_INVALID_GEOMETRY_ID;
+#endif
 }
 
 inline bool noHit(const Ray& r) { return r.geomID < 0; }
 
 inline bool hadHit(const Ray& r) { return r.geomID >= 0; }
 
-/*! intersection context passed to intersect/occluded calls */
-struct IntersectContext
+/*! ray query context passed to intersect/occluded calls */
+struct RayQueryContext
 {
-  RTCIntersectContext context;
+  RTCRayQueryContext context;
   void* userRayExt;               //!< can be used to pass extended ray data to callbacks
+  void* tutorialData;
 };
 
-inline void InitIntersectionContext(uniform IntersectContext* uniform context)
+inline void InitIntersectionContext(uniform RayQueryContext* uniform context)
 {
-  rtcInitIntersectContext(&context->context);
+  rtcInitRayQueryContext(&context->context);
   context->userRayExt = NULL;
 }

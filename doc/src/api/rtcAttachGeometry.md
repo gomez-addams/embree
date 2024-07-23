@@ -1,4 +1,4 @@
-% rtcAttachGeometry(3) | Embree Ray Tracing Kernels 3
+% rtcAttachGeometry(3) | Embree Ray Tracing Kernels 4
 
 #### NAME
 
@@ -6,7 +6,7 @@
 
 #### SYNOPSIS
 
-    #include <embree3/rtcore.h>
+    #include <embree4/rtcore.h>
 
     unsigned int rtcAttachGeometry(
       RTCScene scene,

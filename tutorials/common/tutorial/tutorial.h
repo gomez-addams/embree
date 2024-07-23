@@ -16,7 +16,8 @@
 
 /* include ImGUI */
 #include "../imgui/imgui.h"
-#include "../imgui/imgui_impl_glfw_gl2.h"
+#include "../imgui/backends/imgui_impl_glfw.h"
+#include "../imgui/backends/imgui_impl_opengl2.h"
 
 #endif
 
@@ -67,7 +68,7 @@ namespace embree
   class TutorialApplication : public Application
   {
   public:
-    TutorialApplication (const std::string& tutorialName, const int features);
+    TutorialApplication (const std::string& tutorialName, const int features, int width = 512, int height = 512);
     virtual ~TutorialApplication();
 
   private:
@@ -81,6 +82,9 @@ namespace embree
     /* virtual main function, contains all tutorial logic */
     virtual int main(int argc, char** argv);
 
+    /* creates the Embree device */
+    void create_device();
+    
     /* callback called after command line parsing finished */
     virtual void postParseCommandLine() {}
 
@@ -109,6 +113,8 @@ namespace embree
     /* create a standard window of specified size */
     GLFWwindow* createStandardWindow(int width, int height);
 
+    void setCallbackFunctions(GLFWwindow* window);
+
     /* interactive rendering using GLFW window */
     void renderInteractive();
  
@@ -136,7 +142,6 @@ namespace embree
     /* render settings */
     Ref<SceneGraph::PerspectiveCameraNode> animated_camera;
     Camera camera;
-    Shader shader;
 
     /* framebuffer settings */
     unsigned width;
@@ -147,6 +152,7 @@ namespace embree
     FileName outputImageFilename;
     FileName referenceImageFilename;
     float referenceImageThreshold; // threshold when we consider images to differ
+    unsigned int numFrames = 1; // render as many frames on output or compare mode
 
     /* window settings */
     bool interactive;
@@ -165,6 +171,9 @@ namespace embree
     float speed;
     Vec3f moveDelta;
 
+    bool animate;      // if mblur off -> animate on/off
+    float render_time; // if animate off -> render this time
+
     bool command_line_camera;
     bool print_frame_rate;
     Averaged<double> avg_render_time;
@@ -177,11 +186,23 @@ namespace embree
     int debug2;
     int debug3;
 
-    RTCIntersectContextFlags iflags_coherent;
-    RTCIntersectContextFlags iflags_incoherent;
+    RTCRayQueryFlags iflags_coherent;
+    RTCRayQueryFlags iflags_incoherent;
 
     std::unique_ptr<ISPCScene> ispc_scene;
+
+  private:
+
+#if defined(EMBREE_SYCL_SUPPORT)
+  public:
+    sycl::queue* queue = nullptr;
+    sycl::device* device = nullptr;
+    sycl::context* context = nullptr;
+    bool jit_cache = true;
+#endif
     
+  public:
+
     /* ray statistics */
     void initRayStats();
     int64_t getNumRays();

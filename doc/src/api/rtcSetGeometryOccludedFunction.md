@@ -1,4 +1,4 @@
-% rtcSetGeometryOccludedFunction(3) | Embree Ray Tracing Kernels 3
+% rtcSetGeometryOccludedFunction(3) | Embree Ray Tracing Kernels 4
 
 #### NAME
 
@@ -7,14 +7,14 @@
 
 #### SYNOPSIS
 
-    #include <embree3/rtcore.h>
+    #include <embree4/rtcore.h>
 
     struct RTCOccludedFunctionNArguments
     {
       int* valid;
       void* geometryUserPtr;
       unsigned int primID;
-      struct RTCIntersectContext* context;
+      struct RTCRayQueryContext* context;
       struct RTCRayN* ray;
       unsigned int N;
       unsigned int geomID;
@@ -49,7 +49,7 @@ ray packet size, `valid` points to an array of integers which specify
 whether the corresponding ray is valid (-1) or invalid (0), the
 `geometryUserPtr` member points to the geometry user data previously set
 through `rtcSetGeometryUserData`, the `context` member points to the
-intersection context passed to the ray query, the `ray` member points
+ray query context passed to the ray query, the `ray` member points
 to a ray packet of variable size `N`, and the `geomID` and
 `primID` member identifies the geometry ID and primitive ID of the
 primitive to intersect.
@@ -66,7 +66,7 @@ As a primitive might have multiple intersections with a ray, the
 occlusion filter function needs to be invoked by the user geometry
 occlusion callback for each encountered intersection, if filtering
 of intersections is desired. This can be achieved through the
-`rtcFilterOcclusion` call.
+`rtcInvokeOccludedFilterFromGeometry` call.
 
 Within the user geometry occlusion function, it is safe to trace new
 rays and create new scenes and geometries.
@@ -81,4 +81,4 @@ On failure an error code is set that can be queried using
 
 #### SEE ALSO
 
-[rtcSetGeometryIntersectFunction], [rtcSetGeometryUserData], [rtcFilterOcclusion]
+[rtcSetGeometryIntersectFunction], [rtcSetGeometryUserData], [rtcInvokeOccludedFilterFromGeometry]

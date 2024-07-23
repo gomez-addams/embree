@@ -1,4 +1,4 @@
-% rtcSetGeometryBuildQuality(3) | Embree Ray Tracing Kernels 3
+% rtcSetGeometryBuildQuality(3) | Embree Ray Tracing Kernels 4
 
 #### NAME
 
@@ -6,7 +6,7 @@
 
 #### SYNOPSIS
 
-    #include <embree3/rtcore.h>
+    #include <embree4/rtcore.h>
 
     void rtcSetGeometryBuildQuality(
       RTCGeometry geometry,

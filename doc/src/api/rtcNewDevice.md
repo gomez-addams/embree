@@ -1,4 +1,4 @@
-% rtcNewDevice(3) | Embree Ray Tracing Kernels 3
+% rtcNewDevice(3) | Embree Ray Tracing Kernels 4
 
 #### NAME
 
@@ -6,16 +6,16 @@
 
 #### SYNOPSIS
 
-    #include <embree3/rtcore.h>
+    #include <embree4/rtcore.h>
 
     RTCDevice rtcNewDevice(const char* config);
 
 #### DESCRIPTION
 
-This function creates a new device and returns a handle to this
-device. The device object is reference counted with an initial
-reference count of 1. The handle can be released using the
-`rtcReleaseDevice` API call.
+This function creates a new device to be used for CPU ray tracing and
+returns a handle to this device. The device object is reference
+counted with an initial reference count of 1. The handle can be
+released using the `rtcReleaseDevice` API call.
 
 The device object acts as a class factory for all other object
 types. All objects created from the device (like scenes, geometries,
@@ -101,4 +101,4 @@ using `rtcGetDeviceError(NULL)`.
 
 #### SEE ALSO
 
-[rtcRetainDevice], [rtcReleaseDevice]
+[rtcRetainDevice], [rtcReleaseDevice], [rtcNewSYCLDevice]

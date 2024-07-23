@@ -1,4 +1,4 @@
-% RTCCurveFlags(3) | Embree Ray Tracing Kernels 3
+% RTCCurveFlags(3) | Embree Ray Tracing Kernels 4
 
 #### NAME
 
@@ -6,13 +6,13 @@
 
 #### SYNOPSIS
 
-    #include <embree3/rtcore.h>
+    #include <embree4/rtcore.h>
 
-   enum RTCCurveFlags
-   {
-     RTC_CURVE_FLAG_NEIGHBOR_LEFT  = (1 << 0), 
-     RTC_CURVE_FLAG_NEIGHBOR_RIGHT = (1 << 1) 
-   };
+    enum RTCCurveFlags
+    {
+      RTC_CURVE_FLAG_NEIGHBOR_LEFT  = (1 << 0), 
+      RTC_CURVE_FLAG_NEIGHBOR_RIGHT = (1 << 1) 
+    };
 
 #### DESCRIPTION
 

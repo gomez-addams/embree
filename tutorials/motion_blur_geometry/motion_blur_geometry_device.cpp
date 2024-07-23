@@ -5,6 +5,39 @@
 
 namespace embree {
 
+#define USE_ARGUMENT_CALLBACKS 1
+
+/* all features required by this tutorial */
+#if USE_ARGUMENT_CALLBACKS
+#define FEATURE_MASK \
+  RTC_FEATURE_FLAG_TRIANGLE | \
+  RTC_FEATURE_FLAG_QUAD |            \
+  RTC_FEATURE_FLAG_SUBDIVISION |     \
+  RTC_FEATURE_FLAG_FLAT_LINEAR_CURVE |               \
+  RTC_FEATURE_FLAG_FLAT_BSPLINE_CURVE |              \
+  RTC_FEATURE_FLAG_ROUND_BSPLINE_CURVE |             \
+  RTC_FEATURE_FLAG_DISC_POINT |                      \
+  RTC_FEATURE_FLAG_SPHERE_POINT |                    \
+  RTC_FEATURE_FLAG_ORIENTED_DISC_POINT |             \
+  RTC_FEATURE_FLAG_INSTANCE |                        \
+  RTC_FEATURE_FLAG_USER_GEOMETRY_CALLBACK_IN_ARGUMENTS | \
+  RTC_FEATURE_FLAG_MOTION_BLUR
+#else
+#define FEATURE_MASK \
+  RTC_FEATURE_FLAG_TRIANGLE | \
+  RTC_FEATURE_FLAG_QUAD |            \
+  RTC_FEATURE_FLAG_SUBDIVISION |     \
+  RTC_FEATURE_FLAG_FLAT_LINEAR_CURVE |               \
+  RTC_FEATURE_FLAG_FLAT_BSPLINE_CURVE |              \
+  RTC_FEATURE_FLAG_ROUND_BSPLINE_CURVE |             \
+  RTC_FEATURE_FLAG_DISC_POINT |                      \
+  RTC_FEATURE_FLAG_SPHERE_POINT |                    \
+  RTC_FEATURE_FLAG_ORIENTED_DISC_POINT |             \
+  RTC_FEATURE_FLAG_INSTANCE |                        \
+  RTC_FEATURE_FLAG_USER_GEOMETRY_CALLBACK_IN_GEOMETRY | \
+  RTC_FEATURE_FLAG_MOTION_BLUR
+#endif
+
 /* scene data */
 RTCScene g_scene = nullptr;
 TutorialData data;
@@ -15,7 +48,7 @@ extern "C" unsigned int g_num_time_steps;
 extern "C" unsigned int g_num_time_steps2;
 
 
-__aligned(16) float cube_vertices[8][4] =
+float cube_vertices[8][4] =
 {
   { -1.0f, -1.0f, -1.0f, 0.0f },
   {  1.0f, -1.0f, -1.0f, 0.0f },
@@ -45,19 +78,19 @@ unsigned int cube_quad_indices[24] = {
   0, 1, 2, 3,
 };
 
-__aligned(16) float cube_vertex_crease_weights[8] = {
+float cube_vertex_crease_weights[8] = {
   inf, inf,inf, inf, inf, inf, inf, inf
 };
 
-__aligned(16) unsigned int cube_vertex_crease_indices[8] = {
+unsigned int cube_vertex_crease_indices[8] = {
   0,1,2,3,4,5,6,7
 };
 
-__aligned(16) float cube_edge_crease_weights[12] = {
+float cube_edge_crease_weights[12] = {
   inf, inf, inf, inf, inf, inf, inf, inf, inf, inf, inf, inf
 };
 
-__aligned(16) unsigned int cube_edge_crease_indices[24] =
+unsigned int cube_edge_crease_indices[24] =
 {
   0,1, 1,2, 2,3, 3,0,
   4,5, 5,6, 6,7, 7,4,
@@ -104,7 +137,7 @@ unsigned int addTriangleCube (RTCScene scene, const Vec3fa& pos, unsigned int nu
   /* create a triangulated cube with 12 triangles and 8 vertices */
   RTCGeometry geom = rtcNewGeometry (g_device, RTC_GEOMETRY_TYPE_TRIANGLE);
   rtcSetGeometryTimeStepCount(geom,num_time_steps);
-  rtcSetSharedGeometryBuffer(geom, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, cube_triangle_indices, 0, 3*sizeof(unsigned int), 12);
+  rtcSetSharedGeometryBuffer(geom, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, data.cube_triangle_indices, 0, 3*sizeof(unsigned int), 12);
 
   for (unsigned int t=0; t<num_time_steps; t++)
   {
@@ -146,7 +179,7 @@ unsigned int addQuadCube (RTCScene scene, const Vec3fa& pos, unsigned int num_ti
   /* create a quad cube with 6 quads and 8 vertices */
   RTCGeometry geom = rtcNewGeometry (g_device, RTC_GEOMETRY_TYPE_QUAD);
   rtcSetGeometryTimeStepCount(geom,num_time_steps);
-  rtcSetSharedGeometryBuffer(geom, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT4, cube_quad_indices, 0, 4*sizeof(unsigned int), 6);
+  rtcSetSharedGeometryBuffer(geom, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT4, data.cube_quad_indices, 0, 4*sizeof(unsigned int), 6);
 
   for (unsigned int t=0; t<num_time_steps; t++)
   {
@@ -215,7 +248,7 @@ unsigned int addCurve (RTCScene scene, const Vec3fa& pos, RTCGeometryType type, 
   rtcSetGeometryTimeStepCount(geom,num_time_steps);
   rtcSetGeometryTessellationRate (geom,16.0f);
 
-  Vec3fa* bspline = (Vec3fa*) alignedMalloc(16*sizeof(Vec3fa),16);
+  Vec3fa* bspline = (Vec3fa*) alignedUSMMalloc((16)*sizeof(Vec3fa),16);
   for (int i=0; i<16; i++) {
     float f = (float)(i)/16.0f;
     bspline[i] = Vec3fa(2.0f*f-1.0f,sin(12.0f*f),cos(12.0f*f));
@@ -236,7 +269,7 @@ unsigned int addCurve (RTCScene scene, const Vec3fa& pos, RTCGeometryType type, 
   int* indices = (int*) rtcSetNewGeometryBuffer(geom,RTC_BUFFER_TYPE_INDEX,0,RTC_FORMAT_UINT,sizeof(int),13);
   for (int i=0; i<13; i++) indices[i] = i;
 
-  alignedFree(bspline);
+  alignedUSMFree(bspline);
 
   rtcCommitGeometry(geom);
   unsigned int geomID = rtcAttachGeometry(scene,geom);
@@ -250,7 +283,7 @@ unsigned int addLines (RTCScene scene, const Vec3fa& pos, unsigned int num_time_
   RTCGeometry geom = rtcNewGeometry (g_device, RTC_GEOMETRY_TYPE_FLAT_LINEAR_CURVE);
   rtcSetGeometryTimeStepCount(geom,num_time_steps);
 
-  Vec3fa* bspline = (Vec3fa*) alignedMalloc(16*sizeof(Vec3fa),16);
+  Vec3fa* bspline = (Vec3fa*) alignedUSMMalloc((16)*sizeof(Vec3fa),16);
   for (int i=0; i<16; i++) {
     float f = (float)(i)/16.0f;
     bspline[i] = Vec3fa(2.0f*f-1.0f,sin(12.0f*f),cos(12.0f*f));
@@ -271,7 +304,7 @@ unsigned int addLines (RTCScene scene, const Vec3fa& pos, unsigned int num_time_
   int* indices = (int*) rtcSetNewGeometryBuffer(geom,RTC_BUFFER_TYPE_INDEX,0,RTC_FORMAT_UINT,sizeof(int),15);
   for (int i=0; i<15; i++) indices[i] = i;
 
-  alignedFree(bspline);
+  alignedUSMFree(bspline);
 
   rtcCommitGeometry(geom);
   unsigned int geomID = rtcAttachGeometry(scene,geom);
@@ -284,8 +317,8 @@ RTCScene addInstancedTriangleCube (RTCScene global_scene, const Vec3fa& pos, uns
 {
   RTCScene scene = rtcNewScene(g_device);
   RTCGeometry geom = rtcNewGeometry (g_device, RTC_GEOMETRY_TYPE_TRIANGLE);
-  rtcSetSharedGeometryBuffer(geom, RTC_BUFFER_TYPE_INDEX,  0, RTC_FORMAT_UINT3,  cube_triangle_indices, 0, 3*sizeof(unsigned int), 12);
-  rtcSetSharedGeometryBuffer(geom, RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, cube_vertices, 0, 4*sizeof(float), 8);
+  rtcSetSharedGeometryBuffer(geom, RTC_BUFFER_TYPE_INDEX,  0, RTC_FORMAT_UINT3,  data.cube_triangle_indices, 0, 3*sizeof(unsigned int), 12);
+  rtcSetSharedGeometryBuffer(geom, RTC_BUFFER_TYPE_VERTEX, 0, RTC_FORMAT_FLOAT3, data.cube_vertices, 0, 4*sizeof(float), 8);
   rtcCommitGeometry(geom);
   rtcAttachGeometry(scene,geom);
   rtcReleaseGeometry(geom);
@@ -316,7 +349,7 @@ RTCScene addInstancedQuadCube (RTCScene global_scene, const Vec3fa& pos, unsigne
   RTCScene scene = rtcNewScene(g_device);
   RTCGeometry geom = rtcNewGeometry (g_device, RTC_GEOMETRY_TYPE_QUAD);
   rtcSetGeometryTimeStepCount(geom,num_time_steps);
-  rtcSetSharedGeometryBuffer(geom, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT4, cube_quad_indices, 0, 4*sizeof(unsigned int), 6);
+  rtcSetSharedGeometryBuffer(geom, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT4, data.cube_quad_indices, 0, 4*sizeof(unsigned int), 6);
 
   for (unsigned int t=0; t<num_time_steps; t++)
   {
@@ -375,9 +408,11 @@ void sphereBoundsFunc(const struct RTCBoundsFunctionArguments* args)
   bounds_o->upper_z = p.z+sphere.r;
 }
 
-void sphereIntersectFuncN(const RTCIntersectFunctionNArguments* args)
+RTCIntersectFunctionN sphereIntersectFuncPtr = nullptr;
+
+RTC_SYCL_INDIRECTLY_CALLABLE void sphereIntersectFuncN(const RTCIntersectFunctionNArguments* args)
 {
-  const int* valid = args->valid;
+  int* valid = args->valid;
   void* ptr  = args->geometryUserPtr;
   RTCRayHitN* rays = (RTCRayHitN*)args->rayhit;
   unsigned int primID = args->primID;
@@ -385,8 +420,8 @@ void sphereIntersectFuncN(const RTCIntersectFunctionNArguments* args)
   const Sphere* spheres = (const Sphere*)ptr;
   const Sphere& sphere = spheres[primID];
 
-  if (!valid[0])
-    return;
+  if (!valid[0]) return;
+  valid[0] = 0;
   
   Ray *ray = (Ray *)rays;
   
@@ -417,6 +452,7 @@ void sphereIntersectFuncN(const RTCIntersectFunctionNArguments* args)
     ray->geomID = sphere.geomID;
     ray->primID = (unsigned int) primID;
     ray->Ng = ray->org+t0*ray->dir-sphere_p;
+    valid[0] = -1;
   }
   if ((ray->tnear() < t1) & (t1 < ray->tfar)) {
     ray->u = 0.0f;
@@ -425,12 +461,15 @@ void sphereIntersectFuncN(const RTCIntersectFunctionNArguments* args)
     ray->geomID = sphere.geomID;
     ray->primID = (unsigned int) primID;
     ray->Ng = ray->org+t1*ray->dir-sphere_p;
+    valid[0] = -1;
   }
 }
 
-void sphereOccludedFuncN(const RTCOccludedFunctionNArguments* args)
+RTCOccludedFunctionN sphereOccludedFuncPtr = nullptr;
+
+RTC_SYCL_INDIRECTLY_CALLABLE void sphereOccludedFuncN(const RTCOccludedFunctionNArguments* args)
 {
-  const int* valid = args->valid;
+  int* valid = args->valid;
   void* ptr  = args->geometryUserPtr;
   RTCRayHitN* rays = (RTCRayHitN*)args->ray;
   unsigned int primID = args->primID;
@@ -438,8 +477,8 @@ void sphereOccludedFuncN(const RTCOccludedFunctionNArguments* args)
   const Sphere* spheres = (const Sphere*)ptr;
   const Sphere& sphere = spheres[primID];
 
-  if (!valid[0])
-    return;
+  if (!valid[0]) return;
+  valid[0] = 0;
   
   Ray *ray = (Ray *)rays;
   const int time_segments = sphere.num_time_steps-1;
@@ -464,16 +503,18 @@ void sphereOccludedFuncN(const RTCOccludedFunctionNArguments* args)
   const float t1 = 0.5f*rcpA*(-B+Q);
   if ((ray->tnear() < t0) & (t0 < ray->tfar)) {
     ray->tfar = neg_inf;
+    valid[0] = -1;
   }
   if ((ray->tnear() < t1) & (t1 < ray->tfar)) {
     ray->tfar = neg_inf;
+    valid[0] = -1;
   }
 }
 
 Sphere* addUserGeometrySphere (RTCScene scene, const Vec3fa& p, float r, unsigned int num_time_steps)
 {
   RTCGeometry geom = rtcNewGeometry(g_device, RTC_GEOMETRY_TYPE_USER);
-  Sphere* sphere = (Sphere*) alignedMalloc(sizeof(Sphere),16);
+  Sphere* sphere = (Sphere*) alignedUSMMalloc(sizeof(Sphere),16);
   sphere->p = p;
   sphere->r = r;
   sphere->geomID = rtcAttachGeometry(scene,geom);
@@ -482,8 +523,10 @@ Sphere* addUserGeometrySphere (RTCScene scene, const Vec3fa& p, float r, unsigne
   rtcSetGeometryTimeStepCount(geom,num_time_steps);
   rtcSetGeometryUserData(geom,sphere);
   rtcSetGeometryBoundsFunction(geom,sphereBoundsFunc,nullptr);
-  rtcSetGeometryIntersectFunction(geom,sphereIntersectFuncN);
-  rtcSetGeometryOccludedFunction (geom,sphereOccludedFuncN);
+#if !USE_ARGUMENT_CALLBACKS
+  rtcSetGeometryIntersectFunction(geom,sphereIntersectFuncPtr);
+  rtcSetGeometryOccludedFunction (geom,sphereOccludedFuncPtr);
+#endif
   rtcCommitGeometry(geom);
   rtcReleaseGeometry(geom);
   return sphere;
@@ -516,6 +559,9 @@ unsigned int addGroundPlane (RTCScene scene)
 /* called by the C++ code for initialization */
 extern "C" void device_init (char* cfg)
 {
+  sphereIntersectFuncPtr = GET_FUNCTION_POINTER(sphereIntersectFuncN);
+  sphereOccludedFuncPtr  = GET_FUNCTION_POINTER(sphereOccludedFuncN);
+  
   /* create scene */
   TutorialData_Constructor(&data);
   g_scene = data.g_scene = rtcNewScene(g_device);
@@ -528,8 +574,10 @@ extern "C" void device_init (char* cfg)
   addQuadCube    (g_scene,Vec3fa( 0,1,-5),g_num_time_steps);
   addQuadCube    (g_scene,Vec3fa( 0,5,-5),g_num_time_steps2);
 
-  addSubdivCube  (g_scene,Vec3fa(+5,1,-5),g_num_time_steps);
-  addSubdivCube  (g_scene,Vec3fa(+5,5,-5),g_num_time_steps2);
+  addQuadCube    (g_scene,Vec3fa( +5,1,-5),g_num_time_steps);
+  addQuadCube    (g_scene,Vec3fa( +5,5,-5),g_num_time_steps2);
+  //addSubdivCube  (g_scene,Vec3fa(+5,1,-5),g_num_time_steps);
+  //addSubdivCube  (g_scene,Vec3fa(+5,5,-5),g_num_time_steps2);
 
   addLines       (g_scene,Vec3fa(-5,1, 0),g_num_time_steps);
   addLines       (g_scene,Vec3fa(-5,5, 0),g_num_time_steps2);
@@ -562,22 +610,24 @@ extern "C" void device_init (char* cfg)
   rtcCommitScene (g_scene);
 }
 
-int frameID = 50;
-
 /* task that renders a single screen tile */
 Vec3fa renderPixel(const TutorialData& data, float x, float y, const ISPCCamera& camera, RayStats& stats)
 {
-  RTCIntersectContext context;
-  rtcInitIntersectContext(&context);
-  
-  float time = abs((int)(0.01f*frameID) - 0.01f*frameID);
+  float time = abs((int)(0.01f*data.frameID) - 0.01f*data.frameID);
   if (data.g_time != -1) time = data.g_time;
 
   /* initialize ray */
   Ray ray(Vec3fa(camera.xfm.p), Vec3fa(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)), 0.0f, inf, time);
 
   /* intersect ray with scene */
-  rtcIntersect1(g_scene,&context,RTCRayHit_(ray));
+  RTCIntersectArguments iargs;
+  rtcInitIntersectArguments(&iargs);
+  iargs.feature_mask = (RTCFeatureFlags) (FEATURE_MASK);
+#if USE_ARGUMENT_CALLBACKS
+  iargs.intersect = sphereIntersectFuncN;
+#endif
+  
+  rtcIntersect1(data.g_scene,RTCRayHit_(ray),&iargs);
   RayStats_addRay(stats);
 
   /* shade pixels */
@@ -608,7 +658,13 @@ Vec3fa renderPixel(const TutorialData& data, float x, float y, const ISPCCamera&
     Ray shadow(ray.org + ray.tfar*ray.dir, neg(lightDir), 0.001f, inf, time);
 
     /* trace shadow ray */
-    rtcOccluded1(g_scene,&context,RTCRay_(shadow));
+    RTCOccludedArguments sargs;
+    rtcInitOccludedArguments(&sargs);
+    sargs.feature_mask = (RTCFeatureFlags) (FEATURE_MASK);
+#if USE_ARGUMENT_CALLBACKS
+    sargs.occluded = sphereOccludedFuncN;
+#endif
+    rtcOccluded1(data.g_scene,RTCRay_(shadow),&sargs);
     RayStats_addShadowRay(stats);
 
     /* add light contribution */
@@ -618,7 +674,7 @@ Vec3fa renderPixel(const TutorialData& data, float x, float y, const ISPCCamera&
   return color;
 }
 
-void updatePixel(const TutorialData& data, int x, int y,
+void renderPixelStandard(const TutorialData& data, int x, int y,
                   int* pixels,
                   const unsigned int width,
                   const unsigned int height,
@@ -657,7 +713,7 @@ void renderTileStandard(int taskIndex,
 
   for (unsigned int y=y0; y<y1; y++) for (unsigned int x=x0; x<x1; x++)
   {
-    updatePixel(data,(float)x,(float)y,pixels,width,height,time,camera,g_stats[threadIndex]);
+    renderPixelStandard(data,x,y,pixels,width,height,time,camera,g_stats[threadIndex]);
   }
 }
 
@@ -680,6 +736,24 @@ extern "C" void renderFrameStandard (int* pixels,
                           const ISPCCamera& camera)
 {
   /* render next frame */
+#if defined(EMBREE_SYCL_TUTORIAL) && !defined(EMBREE_SYCL_RT_SIMULATION)
+  TutorialData ldata = data;
+  sycl::event event = global_gpu_queue->submit([=](sycl::handler& cgh){
+    const sycl::nd_range<2> nd_range = make_nd_range(height,width);
+    cgh.parallel_for(nd_range,[=](sycl::nd_item<2> item) {
+      const unsigned int x = item.get_global_id(1); if (x >= width ) return;
+      const unsigned int y = item.get_global_id(0); if (y >= height) return;
+      RayStats stats;
+      renderPixelStandard(ldata,x,y,pixels,width,height,time,camera,stats);
+    });
+  });
+  global_gpu_queue->wait_and_throw();
+
+  const auto t0 = event.template get_profiling_info<sycl::info::event_profiling::command_start>();
+  const auto t1 = event.template get_profiling_info<sycl::info::event_profiling::command_end>();
+  const double dt = (t1-t0)*1E-9;
+  ((ISPCCamera*)&camera)->render_time = dt;
+#else
   const int numTilesX = (width +TILE_SIZE_X-1)/TILE_SIZE_X;
   const int numTilesY = (height+TILE_SIZE_Y-1)/TILE_SIZE_Y;
   parallel_for(size_t(0),size_t(numTilesX*numTilesY),[&](const range<size_t>& range) {
@@ -687,6 +761,7 @@ extern "C" void renderFrameStandard (int* pixels,
     for (size_t i=range.begin(); i<range.end(); i++)
       renderTileTask((int)i,threadIndex,pixels,width,height,time,camera,numTilesX,numTilesY);
   }); 
+#endif
 }
 
 /* called by the C++ code to render */
@@ -698,8 +773,8 @@ extern "C" void device_render (int* pixels,
 {
   /* create accumulator */
   if (data.g_accu_width != width || data.g_accu_height != height) {
-    alignedFree(data.g_accu);
-    data.g_accu = (Vec3ff*) alignedMalloc(width*height*sizeof(Vec3ff),16);
+    alignedUSMFree(data.g_accu);
+    data.g_accu = (Vec3ff*) alignedUSMMalloc((width*height)*sizeof(Vec3ff),16,EMBREE_USM_SHARED_DEVICE_READ_WRITE);
     data.g_accu_width = width;
     data.g_accu_height = height;
     for (unsigned int i=0; i<width*height; i++)
@@ -720,7 +795,7 @@ extern "C" void device_render (int* pixels,
   }
 
   /* render next frame */
-  frameID++;
+  data.frameID++;
 }
 
 /* called by the C++ code for cleanup */

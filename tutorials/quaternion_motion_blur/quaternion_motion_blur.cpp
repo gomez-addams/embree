@@ -4,6 +4,14 @@
 #include "../common/tutorial/tutorial.h"
 #include "../common/tutorial/benchmark_render.h"
 
+#if defined(EMBREE_SYCL_TUTORIAL)
+#  define NAME "quaternion_motion_blur_sycl"
+#  define FEATURES FEATURE_RTCORE | FEATURE_SYCL
+#else
+#  define NAME "quaternion_motion_blur"
+#  define FEATURES FEATURE_RTCORE
+#endif
+
 namespace embree
 {
   typedef void (*DrawGUI)(void);
@@ -15,15 +23,16 @@ namespace embree
     float g_shutter_close = 1.f;
     bool g_animate = true;
     bool g_accumulate = true;
-    bool g_motion_blur = true;
     bool g_reset = false;
     DrawGUI g_drawGUI = nullptr;
   }
 
+  extern "C" bool g_motion_blur;
+
   struct Tutorial : public TutorialApplication 
   {
     Tutorial()
-      : TutorialApplication("quaternion motion blur",FEATURE_RTCORE | FEATURE_STREAM)
+      : TutorialApplication(NAME,FEATURES)
     {
       registerOption("spp", [] (Ref<ParseStream> cin, const FileName& path) {
           g_spp = cin->getInt();

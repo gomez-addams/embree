@@ -3,6 +3,14 @@
 
 #include "../common/tutorial/tutorial.h"
 
+#if defined(EMBREE_SYCL_TUTORIAL)
+#  define NAME "next_hit_sycl"
+#  define FEATURES FEATURE_RTCORE | FEATURE_SYCL
+#else
+#  define NAME "next_hit"
+#  define FEATURES FEATURE_RTCORE
+#endif
+
 namespace embree
 {
   #define SINGLE_PASS 0
@@ -26,11 +34,11 @@ namespace embree
     bool g_enable_opacity = false;
     float g_curve_opacity = 0.5f;
   }
-  
+
   struct Tutorial : public SceneLoadingTutorialApplication
   {
     Tutorial()
-      : SceneLoadingTutorialApplication("next_hit",FEATURE_RTCORE)
+      : SceneLoadingTutorialApplication(NAME,FEATURES)
     {
       registerOption("single_pass", [] (Ref<ParseStream> cin, const FileName& path) {
           g_next_hit_mode = SINGLE_PASS;

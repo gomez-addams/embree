@@ -8,10 +8,19 @@ MACRO(_SET_IF_EMPTY VAR VALUE)
 ENDMACRO()
 
 IF (EMBREE_ARM)
-  SET(FLAGS_SSE2 "-D__SSE__ -D__SSE2__")
-  SET(FLAGS_SSE42 "-D__SSE4_2__  -D__SSE4_1__")
-  SET(FLAGS_AVX "-D__AVX__ -D__SSE4_2__  -D__SSE4_1__  -D__BMI__ -D__BMI2__ -D__LZCNT__")
-  SET(FLAGS_AVX2 "-D__AVX2__ -D__AVX__ -D__SSE4_2__  -D__SSE4_1__  -D__BMI__ -D__BMI2__ -D__LZCNT__")
+  IF ("x86_64" IN_LIST CMAKE_OSX_ARCHITECTURES)
+    # set ARM an x86 flags for macOS universal binary build
+    SET(FLAGS_SSE2 "-D__SSE__ -D__SSE2__ -msse -msse2 -mno-sse4.2")
+    SET(FLAGS_SSE42 "-D__SSE4_2__  -D__SSE4_1__ -msse4.2")
+    SET(FLAGS_AVX "-D__AVX__ -D__SSE4_2__  -D__SSE4_1__  -D__BMI__ -D__BMI2__ -D__LZCNT__ -mavx")
+    SET(FLAGS_AVX2 "-D__AVX2__ -D__AVX__ -D__SSE4_2__  -D__SSE4_1__  -D__BMI__ -D__BMI2__ -D__LZCNT__ -mf16c -mavx2 -mfma -mlzcnt -mbmi -mbmi2")
+    _SET_IF_EMPTY(FLAGS_AVX512 "-march=skx")
+  ELSE ()
+    SET(FLAGS_SSE2 "-D__SSE__ -D__SSE2__")
+    SET(FLAGS_SSE42 "-D__SSE4_2__  -D__SSE4_1__")
+    SET(FLAGS_AVX "-D__AVX__ -D__SSE4_2__  -D__SSE4_1__  -D__BMI__ -D__BMI2__ -D__LZCNT__")
+    SET(FLAGS_AVX2 "-D__AVX2__ -D__AVX__ -D__SSE4_2__  -D__SSE4_1__  -D__BMI__ -D__BMI2__ -D__LZCNT__")
+  ENDIF ()
 ELSE ()
   # for `thread` keyword
   _SET_IF_EMPTY(FLAGS_SSE2  "-msse -msse2 -mno-sse4.2")
@@ -86,7 +95,7 @@ ELSE()
   ENDIF()
   SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")                       # generate position independent code suitable for shared libraries
   SET(CMAKE_C_FLAGS   "${CMAKE_C_FLAGS}   -fPIC")                       # generate position independent code suitable for shared libraries
-  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")                  # enables C++11 features
+  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")                  # enables C++11 features    
   SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility=hidden")         # makes all symbols hidden by default
   SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility-inlines-hidden") # makes all inline symbols hidden by default
   SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-strict-aliasing")        # disables strict aliasing rules
@@ -141,5 +150,6 @@ ELSE()
       ENDIF()
     ENDIF()
   ENDIF(APPLE)
+
 
 ENDIF()

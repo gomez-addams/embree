@@ -3,17 +3,17 @@
 ## Copyright 2009-2021 Intel Corporation
 ## SPDX-License-Identifier: Apache-2.0
 
+
 import sys
 import subprocess
 import os
-import ctypes
 import pickle
 import re
+import shutil
 
 cwd = os.getcwd()
 
 g_debugMode = False
-g_benchmarkMode = False
 g_intensity = 2
 
 def escape(str):
@@ -42,12 +42,14 @@ def fix_cmake_paths():
 
 # detect platform
 if sys.platform.startswith("win"):
+  import ctypes
   SEM_FAILCRITICALERRORS = 0x0001
   SEM_NOGPFAULTERRORBOX  = 0x0002
   SEM_NOOPENFILEERRORBOX = 0x8000
   ctypes.windll.kernel32.SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
   OS = "windows"
 elif sys.platform.startswith("cygwin"):
+  import ctypes
   SEM_FAILCRITICALERRORS = 0x0001
   SEM_NOGPFAULTERRORBOX  = 0x0002
   SEM_NOOPENFILEERRORBOX = 0x8000
@@ -61,16 +63,9 @@ else:
   print("unknown platform: "+ sys.platform);
   sys.exit(1)
 
-NAS = ""
-if OS == "windows":
-  NAS = os.environ["NAS_WINDOWS"]
-elif OS == "linux":
-  NAS = os.environ["NAS_LINUX"]
-elif OS == "macosx":
-  NAS = os.environ["NAS_MACOSX"]
-
-# path of oneapi installation on windows machines
-ONE_API_PATH_WINDOWS="C:\\Program Files (x86)\\Intel\\oneAPI\\compiler"
+NAS = os.environ["STORAGE_PATH"] + "/packages/apps"
+if "klocwork:ON" in sys.argv:
+  NAS = "/NAS/packages/apps"
 
 # configures tests for specified host machine
 def runConfig(config):
@@ -88,9 +83,11 @@ def runConfig(config):
   if "threads" in config:
     threads = config["threads"]
 
+  # TODO: not used in any of the workflow definitions
   if "memcheck" in config:
     conf.append("-D EMBREE_TESTING_MEMCHECK="+config["memcheck"]+"")
 
+  # TODO: this is not used anywhere in embree cmake...
   if "sde" in config:
     conf.append("-D EMBREE_TESTING_SDE="+config["sde"]+"")
 
@@ -105,17 +102,24 @@ def runConfig(config):
   if "klocwork" in config:
     conf.append("-D EMBREE_TESTING_KLOCWORK="+config["klocwork"])
 
+  if "L0RTAS" in config:
+    conf.append("-D EMBREE_SYCL_L0_RTAS_BUILDER="+config["L0RTAS"])
+
   if "package" in config:
     conf.append("-D EMBREE_STACK_PROTECTOR=ON")
 
   if "maxinstancelevelcount" in config:
     conf.append("-D EMBREE_MAX_INSTANCE_LEVEL_COUNT="+config["maxinstancelevelcount"])
 
+  enable_sycl_support = False
+  if "EMBREE_SYCL_SUPPORT" in config:
+    enable_sycl_support = True
+    conf.append("-D EMBREE_SYCL_SUPPORT="+config["EMBREE_SYCL_SUPPORT"])
+    conf.append("-D EMBREE_TESTING_ONLY_SYCL_TESTS=ON")
+
   #if "package" in config and OS == 'linux': # we need up to date cmake for RPMs to work properly
-  #  env.append("module load cmake")
   compiler = config["compiler"]
   platform = config["platform"]
-  ispc_ext = "-vs2013"
   if OS == "windows":
     cmake_build_suffix = "-- /m /t:rebuild"
     ext = ""
@@ -125,23 +129,18 @@ def runConfig(config):
       conf.append("-G \"Visual Studio 16 2019\"")
       conf.append("-T \"V142\"")
       conf.append("-A \"x64\"")
-      ispc_ext = "-vs2015"
     elif (compiler == "V141"):
       conf.append("-G \"Visual Studio 15 2017"+ext+"\"")
       conf.append("-T \"V141\"")
-      ispc_ext = "-vs2015"
     elif (compiler == "ICC19-VC141"):
       conf.append("-G \"Visual Studio 15 2017"+ext+"\"")
       conf.append("-T \"Intel C++ Compiler 19.0\"")
-      ispc_ext = "-vs2015"
     elif (compiler == "ICC18-VC141"):
       conf.append("-G \"Visual Studio 15 2017"+ext+"\"")
       conf.append("-T \"Intel C++ Compiler 18.0\"")
-      ispc_ext = "-vs2015"
     elif (compiler == "V140"):
       conf.append("-G \"Visual Studio 14 2015"+ext+"\"")
       conf.append("-T \"V140\"")
-      ispc_ext = "-vs2015"
     elif (compiler == "V120"):
       conf.append("-G \"Visual Studio 12 2013"+ext+"\"")
       conf.append("-T \"V120\"")
@@ -151,15 +150,12 @@ def runConfig(config):
     elif (compiler == "ICC19-VC14"):
       conf.append("-G \"Visual Studio 14 2015"+ext+"\"")
       conf.append("-T \"Intel C++ Compiler 19.0\"")
-      ispc_ext = "-vs2015"
     elif (compiler == "ICC18-VC14"):
       conf.append("-G \"Visual Studio 14 2015"+ext+"\"")
       conf.append("-T \"Intel C++ Compiler 18.0\"")
-      ispc_ext = "-vs2015"
     elif (compiler == "ICC17-VC14"):
       conf.append("-G \"Visual Studio 14 2015"+ext+"\"")
       conf.append("-T \"Intel C++ Compiler 17.0\"")
-      ispc_ext = "-vs2015"
     elif (compiler == "ICC17-VC12"):
       conf.append("-G \"Visual Studio 12 2013"+ext+"\"")
       conf.append("-T \"Intel C++ Compiler 17.0\"")
@@ -176,16 +172,15 @@ def runConfig(config):
       conf.append("-G \"Visual Studio 16 2019\"")
       conf.append("-A "+platform)
       conf.append("-T \"LLVM_v142\"")
-      ispc_ext = "-vs2015"
     elif (compiler == "V141_CLANG"):
       conf.append("-G \"Visual Studio 15 2017"+ext+"\"")
       conf.append("-T \"v141_clang_c2\"")
-      ispc_ext = "-vs2015"
     elif (compiler.startswith("ICX")):
       cmake_build_suffix = ""
-      ispc_ext = "-vs2015"
-      env.append('"'+ONE_API_PATH_WINDOWS+'\\'+compiler[3:]+'\\env\\vars.bat"')
       conf.append("-G Ninja -D CMAKE_CXX_COMPILER=icx -DCMAKE_C_COMPILER=icx")
+    elif (compiler.startswith("dpcpp")):
+      cmake_build_suffix=""
+      conf.append("-G Ninja -D CMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang")
     else:
       raise ValueError('unknown compiler: ' + compiler + '')
 
@@ -195,15 +190,13 @@ def runConfig(config):
     elif (compiler == "CLANG"):
       conf.append("-D CMAKE_CXX_COMPILER=clang++ -D CMAKE_C_COMPILER=clang")
     elif (compiler.startswith("ICX")):
-      env.append("source "+NAS+"/intel/"+compiler[3:]+"/compiler/latest/env/vars.sh")
-      conf.append("-D CMAKE_CXX_COMPILER=icpx -D CMAKE_C_COMPILER=icx")
-    elif (compiler.startswith("DPCPP")):
-      env.append("source "+NAS+"/intel/"+compiler[5:]+"/compiler/latest/env/vars.sh")
-      conf.append("-D CMAKE_CXX_COMPILER=dpcpp -D CMAKE_C_COMPILER=icx")
+      conf.append("-G Ninja -DCMAKE_CXX_COMPILER=icpx -DCMAKE_C_COMPILER=icx")
     elif (compiler.startswith("ICC")):
       conf.append("-D CMAKE_CXX_COMPILER="+NAS+"/intel/"+compiler[3:]+"/bin/icpc -D CMAKE_C_COMPILER="+NAS+"/intel/"+compiler[3:]+"/bin/icc")
     elif (compiler.startswith("CLANG")):
       conf.append("-D CMAKE_CXX_COMPILER="+NAS+"/clang/v"+compiler[5:]+"/bin/clang++ -D CMAKE_C_COMPILER="+NAS+"/clang/v"+compiler[5:]+"/bin/clang")
+    elif (compiler.startswith("dpcpp")):
+      conf.append("-G Ninja -D CMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang")
     else:
       raise ValueError('unknown compiler: ' + compiler + '')
 
@@ -214,6 +207,9 @@ def runConfig(config):
       conf.append("-D CMAKE_CXX_COMPILER=clang++ -D CMAKE_C_COMPILER=clang")
     elif (compiler.startswith("ICC")):
       conf.append("-D CMAKE_CXX_COMPILER="+NAS+"/intel/"+compiler[3:]+"-osx/compiler/latest/mac/bin/intel64/icpc -D CMAKE_C_COMPILER="+NAS+"/intel/"+compiler[3:]+"-osx/compiler/latest/mac/bin/intel64/icc")
+    elif (compiler.startswith("ICX")):
+      conf.append("-D CMAKE_CXX_COMPILER=/opt/intel/oneapi/compiler/"+compiler[3:]+"/mac/bin/intel64/icpc")
+      conf.append("-D CMAKE_C_COMPILER=/opt/intel/oneapi/compiler/"+compiler[3:]+"/mac/bin/intel64/icc")
     else:
       raise ValueError('unknown compiler: ' + compiler + '')
 
@@ -235,7 +231,7 @@ def runConfig(config):
         elif OS == "macosx":
           conf.append("-D EMBREE_ISPC_EXECUTABLE="+NAS + "/ispc/"+ispc_version+"-osx/"+bin_folder+"ispc")
         elif OS == "windows":
-          conf.append("-D EMBREE_ISPC_EXECUTABLE="+NAS+"\\ispc\\"+ispc_version+"-windows"+ispc_ext+"\\"+bin_folder+"ispc.exe")
+          conf.append("-D EMBREE_ISPC_EXECUTABLE="+NAS+"\\ispc\\"+ispc_version+"-windows\\"+bin_folder+"ispc.exe")
         else:
           sys.stderr.write("unknown operating system "+OS)
           sys.exit(1)
@@ -291,10 +287,13 @@ def runConfig(config):
         tbb_path = ""+NAS+"\\tbb\\tbb-"+tasking[3:]+"-windows"
         conf.append("-D EMBREE_TBB_ROOT="+tbb_path)
 
+        # prepend PATH modification to prevent problems with non-delayed
+        # evaluation of variables in cmd when running oneAPI DPC++ compiler
+        # setup script, for example.
         if platform == "x64":
-          env.append("set PATH="+tbb_path+"\\bin\\intel64\\vc12;"+tbb_path+"\\bin\\intel64\\vc14;"+tbb_path+"\\redist\\intel64\\vc12;"+tbb_path+"\\redist\\intel64\\vc14;%PATH%")
+          env.insert(0, "set PATH="+tbb_path+"\\bin\\intel64\\vc12;"+tbb_path+"\\bin\\intel64\\vc14;"+tbb_path+"\\redist\\intel64\\vc12;"+tbb_path+"\\redist\\intel64\\vc14;%PATH%")
         else:
-          env.append("set PATH="+tbb_path+"\\bin\\ia32\\vc12;"+tbb_path+"\\bin\\ia32\\vc14;"+tbb_path+"\\redist\\ia32\\vc12;"+tbb_path+"\\redist\\ia32\\vc14;%PATH%")
+          env.insert(0, "set PATH="+tbb_path+"\\bin\\ia32\\vc12;"+tbb_path+"\\bin\\ia32\\vc14;"+tbb_path+"\\redist\\ia32\\vc12;"+tbb_path+"\\redist\\ia32\\vc14;%PATH%")
 
       else:
         sys.stderr.write("unknown operating system "+OS)
@@ -307,26 +306,13 @@ def runConfig(config):
     conf.append("-D EMBREE_API_NAMESPACE="+config["api_namespace"])
     conf.append("-D EMBREE_LIBRARY_NAME="+config["api_namespace"])  # we test different library name at the same time
     conf.append("-D EMBREE_ISPC_SUPPORT=OFF")
-  if "ISPC_SUPPORT" in config:
-    conf.append("-D EMBREE_ISPC_SUPPORT="+config["ISPC_SUPPORT"])
-  if "STATIC_LIB" in config:
-    conf.append("-D EMBREE_STATIC_LIB="+config["STATIC_LIB"])
-  if "TUTORIALS" in config:
-    conf.append("-D EMBREE_TUTORIALS="+config["TUTORIALS"])
-  if "BACKFACE_CULLING" in config:
-    conf.append("-D EMBREE_BACKFACE_CULLING="+config["BACKFACE_CULLING"])
-  if "BACKFACE_CULLING_CURVES" in config:
-    conf.append("-D EMBREE_BACKFACE_CULLING_CURVES="+config["BACKFACE_CULLING_CRUVES"])
-  if "IGNORE_INVALID_RAYS" in config:
-    conf.append("-D EMBREE_IGNORE_INVALID_RAYS="+config["IGNORE_INVALID_RAYS"])
-  if "FILTER_FUNCTION" in config:
-    conf.append("-D EMBREE_FILTER_FUNCTION="+config["FILTER_FUNCTION"])
-  if "RAY_MASK" in config:
-    conf.append("-D EMBREE_RAY_MASK="+config["RAY_MASK"])
-  if "RAY_PACKETS" in config:
-    conf.append("-D EMBREE_RAY_PACKETS="+config["RAY_PACKETS"])
-  if "STAT_COUNTERS" in config:
-    conf.append("-D EMBREE_STAT_COUNTERS="+config["STAT_COUNTERS"])
+
+  # Add embree specific optons
+  for opt in ["LEVEL_ZERO", "STATIC_LIB", "TUTORIALS", "BACKFACE_CULLING", "BACKFACE_CULLING_CURVES", "IGNORE_INVALID_RAYS", "FILTER_FUNCTION", "LARGEGRF", "RAY_MASK", "RAY_PACKETS", "STAT_COUNTERS", "COMPACT_POLYS", "MIN_WIDTH"]:
+    if opt in config:
+      conf.append("-D EMBREE_"+opt+"="+config[opt])
+
+  # TODO: check if we want to chonge the names of theese options, so that the pattern fits here as well
   if "TRI" in config:
     conf.append("-D EMBREE_GEOMETRY_TRIANGLE="+config["TRI"])
   if "QUAD" in config:
@@ -341,33 +327,64 @@ def runConfig(config):
     conf.append("-D EMBREE_GEOMETRY_USER="+config["USERGEOM"])
   if "INSTANCE" in config:
     conf.append("-D EMBREE_GEOMETRY_INSTANCE="+config["INSTANCE"])
+  if "INSTANCE_ARRAY" in config:
+    conf.append("-D EMBREE_GEOMETRY_INSTANCE_ARRAY="+config["INSTANCE_ARRAY"])
   if "POINT" in config:
     conf.append("-D EMBREE_GEOMETRY_POINT="+config["POINT"])
-  if "COMPACT_POLYS" in config:
-    conf.append("-D EMBREE_COMPACT_POLYS="+config["COMPACT_POLYS"])
-  if "MIN_WIDTH" in config:
-    conf.append("-D EMBREE_MIN_WIDTH="+config["MIN_WIDTH"])
   if "GLFW" in config:
     conf.append("-D EMBREE_TUTORIALS_GLFW="+config["GLFW"])
   if "frequency_level" in config:
     rtcore.append("frequency_level="+config["frequency_level"])
 
+  if "sycl" in config:
+      conf.append("-D EMBREE_SYCL_AOT_DEVICES="+config["sycl"])
+  if "implicit_dispatch_globals" in config:
+    conf.append("-D EMBREE_SYCL_IMPLICIT_DISPATCH_GLOBALS="+config["implicit_dispatch_globals"])
+  if "sycl_test" in config:
+    conf.append("-D EMBREE_SYCL_TEST="+config["sycl_test"])
+  if "rt_validation_api" in config:
+    conf.append("-D EMBREE_SYCL_RT_VALIDATION_API="+config["rt_validation_api"])
+  if "test_only_sycl" in config:
+    conf.append("-D EMBREE_TESTING_ONLY_SYCL_TESTS="+config["test_only_sycl"])
+  else:
+    conf.append("-D EMBREE_TESTING_ONLY_SYCL_TESTS=OFF")
+
+  if "EMBREE_USE_GOOGLE_BENCHMARK" in config:
+    conf.append("-D EMBREE_USE_GOOGLE_BENCHMARK="+config["EMBREE_USE_GOOGLE_BENCHMARK"])
+  else:
+    conf.append("-D EMBREE_USE_GOOGLE_BENCHMARK=OFF")
+  if "EMBREE_GOOGLE_BENCHMARK_DIR" in config:
+    conf.append("-D benchmark_DIR:PATH="+config["EMBREE_GOOGLE_BENCHMARK_DIR"])
+
+  if "EMBREE_BUILD_GOOGLE_BENCHMARK_FROM_SOURCE" in config:
+    conf.append("-D EMBREE_BUILD_GOOGLE_BENCHMARK_FROM_SOURCE=ON")
+  else:
+    conf.append("-D EMBREE_BUILD_GOOGLE_BENCHMARK_FROM_SOURCE=OFF")
+
   if "package" in config:
+    SIGN_FILE = ""
+    if OS == "windows":
+      SIGN_FILE = os.environ["SIGN_FILE_WINDOWS"]
+    elif OS == "linux":
+      SIGN_FILE = os.environ["SIGN_FILE_LINUX"]
+    elif OS == "macosx":
+      SIGN_FILE = os.environ["SIGN_FILE_MAC"]
+    conf.append("-D EMBREE_SIGN_FILE="+SIGN_FILE)
+
+    conf.append("-D BUILD_TESTING=ON")
+    conf.append("-D EMBREE_TESTING_INSTALL_TESTS=ON")
     conf.append("-D EMBREE_TESTING_PACKAGE=ON")
-    conf.append("-D EMBREE_TUTORIALS_OPENIMAGEIO=OFF")
-    conf.append("-D EMBREE_TUTORIALS_LIBJPEG=OFF")
-    conf.append("-D EMBREE_TUTORIALS_LIBPNG=OFF")
     if OS == "linux" and config["package"] == "ZIP":
-      conf.append("-D EMBREE_SIGN_FILE="+NAS+"/signfile/linux/SignFile")
       conf.append("-D EMBREE_INSTALL_DEPENDENCIES=ON")
+      conf.append("-D EMBREE_BUILD_GLFW_FROM_SOURCE=ON")
       conf.append("-D EMBREE_ZIP_MODE=ON")
       conf.append("-D CMAKE_SKIP_INSTALL_RPATH=OFF")
       conf.append("-D CMAKE_INSTALL_INCLUDEDIR=include")
       conf.append("-D CMAKE_INSTALL_LIBDIR=lib")
       conf.append("-D CMAKE_INSTALL_DOCDIR=doc")
       conf.append("-D CMAKE_INSTALL_BINDIR=bin")
+      conf.append("-D CMAKE_INSTALL_TESTDIR=testing")
     elif OS == "macosx" and config["package"] == "ZIP":
-      conf.append("-D EMBREE_SIGN_FILE="+NAS+"/signfile/mac/SignFile")
       conf.append("-D EMBREE_INSTALL_DEPENDENCIES=ON")
       conf.append("-D EMBREE_ZIP_MODE=ON")
       conf.append("-D CMAKE_SKIP_INSTALL_RPATH=OFF")
@@ -376,34 +393,33 @@ def runConfig(config):
       conf.append("-D CMAKE_INSTALL_LIBDIR=lib")
       conf.append("-D CMAKE_INSTALL_DOCDIR=doc")
       conf.append("-D CMAKE_INSTALL_BINDIR=bin")
+      conf.append("-D CMAKE_INSTALL_TESTDIR=testing")
     elif OS == "windows" and config["package"] == "ZIP":
-      conf.append("-D EMBREE_SIGN_FILE="+NAS+"\\signfile\\windows\\SignFile.exe")
       conf.append("-D EMBREE_INSTALL_DEPENDENCIES=ON")
+      conf.append("-D EMBREE_BUILD_GLFW_FROM_SOURCE=ON")
       conf.append("-D EMBREE_ZIP_MODE=ON")
       conf.append("-D CMAKE_INSTALL_INCLUDEDIR=include")
       conf.append("-D CMAKE_INSTALL_LIBDIR=lib")
       conf.append("-D CMAKE_INSTALL_DATAROOTDIR=")
       conf.append("-D CMAKE_INSTALL_DOCDIR=doc")
       conf.append("-D CMAKE_INSTALL_BINDIR=bin")
+      conf.append("-D CMAKE_INSTALL_TESTDIR=testing")
     else:
       sys.stderr.write("unknown package mode: "+OS+":"+config["package"])
       sys.exit(1)
 
   if rtcore:
     conf.append("-D EMBREE_CONFIG="+(",".join(rtcore)))
-
-  if g_benchmarkMode and OS == "linux":
-    conf.append("-D EMBREE_USE_GOOGLE_BENCHMARK=ON")
-    conf.append("-D benchmark_DIR:PATH="+NAS+"/google-benchmark/vis-perf-x8280-1/lib64/cmake/benchmark")
+    
+  if "dumptests" in config:
+    conf.append("-D EMBREE_TESTING_DUMPTESTS=" + config["dumptests"])
+  if "dumpformat" in config:
+    conf.append("-D EMBREE_TESTING_DUMPFORMAT=" + config["dumpformat"])
 
   ctest_suffix = ""
   ctest_suffix += " -D EMBREE_TESTING_INTENSITY="+str(g_intensity)
   if "klocwork" in config:
     ctest_suffix += " -D EMBREE_TESTING_KLOCWORK="+config["klocwork"]
-  if "update_models" in config:
-    ctest_suffix += " -D EMBREE_UPDATE_MODELS="+config["update_models"]
-  else:
-    ctest_suffix += " -D EMBREE_UPDATE_MODELS=ON"
 
   ctest_suffix += " -D CTEST_CONFIGURATION_TYPE=\""+build+"\""
   ctest_suffix += " -D CTEST_BUILD_OPTIONS=\"" + escape(" ".join(conf))+"\""
@@ -416,13 +432,33 @@ def runConfig(config):
 
 # builds or runs tests for specified host machine
 def run(mode):
-  if not (mode == "build" or mode=="test"):
-    sys.stderr.write("unknown mode: "+mode+". should be 'build' or 'test'")
-    sys.exit(1)
-  
+
   [ctest_env, ctest_suffix, cmake_build_suffix, threads] = pickle.load(open(".ctest_conf", "rb"))
-  cmd = ctest_env + "ctest -VV -S "+ os.path.join("scripts","test.cmake -DSTAGE="+mode+" -DTHREADS="+threads+" -DBUILD_SUFFIX=\""+cmake_build_suffix+"\"") + ctest_suffix
-  
+
+  # pick sde executable
+  # don't use sde if no sde cpuid is specified
+  sde_cmd = ""
+  if mode == "test" and "sde" in g_config:
+    if OS == "linux":
+      sde_cmd = os.path.sep.join([NAS, 'sde', 'lin', 'sde64'])
+    elif OS == "macosx":
+      sde_cmd = os.path.sep.join([NAS, 'sde', 'mac', 'sde64'])
+    elif OS == "windows":
+      sde_cmd = os.path.sep.join([NAS, 'sde', 'win', 'sde64'])
+    else:
+      sys.stderr.write("unknown operating system "+OS)
+      sys.exit(1)
+    
+    sde_cmd = sde_cmd + " -" + g_config['sde'] + " -- "
+
+  if mode == "test" or mode == "build":
+    cmd = ctest_env + sde_cmd + "ctest -VV -S "+ os.path.join("scripts","test.cmake -DSTAGE="+mode+" -DTHREADS="+threads+" -DBUILD_SUFFIX=\""+cmake_build_suffix+"\"") + ctest_suffix
+  else:
+    cmd = ctest_env + os.path.join("scripts",mode)
+
+  if mode == "env":
+    cmd = ctest_env + "echo env";
+
   if mode == "test" and not OS == "windows":
     fix_cmake_paths()
 
@@ -443,18 +479,12 @@ g_config = {}
 def parseCommandLine(argv):
   global g_config
   global g_debugMode
-  global g_benchmarkMode
   if len(argv) == 0:
-    #printUsage()
     return;
   elif len(argv)>=1 and argv[0] == "--debug":
     g_debugMode = True
     parseCommandLine(argv[1:len(argv)])
-  elif len(argv)>=1 and argv[0] == "--benchmark":
-    g_benchmarkMode = True
-    parseCommandLine(argv[1:len(argv)])
   elif len(argv)>=1 and argv[0] == "--help":
-    #printUsage()
     return
   elif ':' in argv[0]:
     p = argv[0].split(":")
@@ -470,21 +500,12 @@ def parseCommandLine(argv):
 argv = sys.argv
 g_mode = ""
 if len(argv) < 2:
-  #printUsage()
   sys.exit(1)
 else:
   g_mode = argv[1]
-  if not (g_mode == "configure" or g_mode == "build" or g_mode == "test"):
-    #printUsage()
-    sys.exit(1)
   parseCommandLine(argv[2:len(argv)])
 
 if (g_mode == "configure"):
   runConfig(g_config)
-elif (g_mode == "build"):
-  run("build")
-elif (g_mode == "test"):
-  run("test")
 else:
-  sys.stderr.write("unknown mode: "+g_mode+". should be 'configure', 'build', or 'test'")
-  sys.exit(1)
+  run(g_mode)

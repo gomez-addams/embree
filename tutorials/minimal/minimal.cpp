@@ -1,7 +1,7 @@
 // Copyright 2009-2021 Intel Corporation
 // SPDX-License-Identifier: Apache-2.0
 
-#include <embree3/rtcore.h>
+#include <embree4/rtcore.h>
 #include <stdio.h>
 #include <math.h>
 #include <limits>
@@ -28,7 +28,7 @@
  *       -o minimal \
  *       minimal.c \
  *       -L<PATH>/<TO>/<EMBREE>/lib \
- *       -lembree3 
+ *       -lembree4 
  *
  * You should be able to compile this using a C or C++ compiler.
  */
@@ -155,14 +155,6 @@ void castRay(RTCScene scene,
              float dx, float dy, float dz)
 {
   /*
-   * The intersect context can be used to set intersection
-   * filters or flags, and it also contains the instance ID stack
-   * used in multi-level instancing.
-   */
-  struct RTCIntersectContext context;
-  rtcInitIntersectContext(&context);
-
-  /*
    * The ray hit structure holds both the ray and the hit.
    * The user must initialize it properly -- see API documentation
    * for rtcIntersect1() for details.
@@ -185,7 +177,7 @@ void castRay(RTCScene scene,
    * There are multiple variants of rtcIntersect. This one
    * intersects a single ray with the scene.
    */
-  rtcIntersect1(scene, &context, &rayhit);
+  rtcIntersect1(scene, &rayhit);
 
   printf("%f, %f, %f: ", ox, oy, oz);
   if (rayhit.hit.geomID != RTC_INVALID_GEOMETRY_ID)
@@ -213,7 +205,7 @@ void waitForKeyPressedUnderWindows()
   
   CONSOLE_SCREEN_BUFFER_INFO csbi;
   if (!GetConsoleScreenBufferInfo(hStdOutput, &csbi)) {
-    printf("GetConsoleScreenBufferInfo failed: %d\n", GetLastError());
+    printf("GetConsoleScreenBufferInfo failed: %lu\n", GetLastError());
     return;
   }
   
@@ -223,7 +215,7 @@ void waitForKeyPressedUnderWindows()
   
   /* only pause if running in separate console window. */
   printf("\n\tPress any key to exit...\n");
-  int ch = getch();
+  _getch();
 #endif
 }
 
@@ -238,10 +230,10 @@ int main()
   RTCScene scene = initializeScene(device);
 
   /* This will hit the triangle at t=1. */
-  castRay(scene, 0, 0, -1, 0, 0, 1);
+  castRay(scene, 0.33f, 0.33f, -1, 0, 0, 1);
 
   /* This will not hit anything. */
-  castRay(scene, 1, 1, -1, 0, 0, 1);
+  castRay(scene, 1.00f, 1.00f, -1, 0, 0, 1);
 
   /* Though not strictly necessary in this example, you should
    * always make sure to release resources allocated through Embree. */

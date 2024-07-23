@@ -5,6 +5,26 @@
 
 namespace embree {
 
+#if EMBREE_SYCL_TUTORIAL
+#define USE_ARGUMENT_CALLBACKS 1
+#else
+#define USE_ARGUMENT_CALLBACKS 0
+#endif
+
+/* all features required by this tutorial */
+#if USE_ARGUMENT_CALLBACKS
+#define FEATURE_MASK \
+  RTC_FEATURE_FLAG_TRIANGLE | \
+  RTC_FEATURE_FLAG_FILTER_FUNCTION_IN_ARGUMENTS
+#else
+#define FEATURE_MASK     \
+  RTC_FEATURE_FLAG_TRIANGLE | \
+  RTC_FEATURE_FLAG_FILTER_FUNCTION_IN_GEOMETRY
+#endif
+
+RTC_SYCL_INDIRECTLY_CALLABLE void intersectionFilter(const RTCFilterFunctionNArguments* args);
+RTC_SYCL_INDIRECTLY_CALLABLE void occlusionFilter(const RTCFilterFunctionNArguments* args);
+
 RTCScene g_scene = nullptr;
 TutorialData data;
 
@@ -13,34 +33,6 @@ TutorialData data;
 /******************************************************************************************/
 /*                             Standard Mode                                              */
 /******************************************************************************************/
-
-#define HIT_LIST_LENGTH 16
-
-/* extended ray structure that includes total transparency along the ray */
-struct Ray2
-{
-  Ray ray;
-
-  // ray extensions
-  float transparency; //!< accumulated transparency value
-
-  // we remember up to 16 hits to ignore duplicate hits
-  unsigned int firstHit, lastHit;
-  unsigned int hit_geomIDs[HIT_LIST_LENGTH];
-  unsigned int hit_primIDs[HIT_LIST_LENGTH];
-};
-
-inline RTCRayHit* RTCRayHit_(Ray2& ray)
-{
-  RTCRayHit* ray_ptr = (RTCRayHit*)&ray;
-  return ray_ptr;
-}
-
-inline RTCRay* RTCRay_(Ray2& ray)
-{
-  RTCRay* ray_ptr = (RTCRay*)&ray;
-  return ray_ptr;
-}
 
 /* 3D procedural transparency */
 inline float transparencyFunction(Vec3fa& h)
@@ -64,60 +56,69 @@ void renderPixelStandard(const TutorialData& data,
   float weight = 1.0f;
   Vec3fa color = Vec3fa(0.0f);
 
-  IntersectContext context;
+  RayQueryContext context;
   InitIntersectionContext(&context);
-  
-  /* initialize ray */
-  Ray2 primary;
-  init_Ray(primary.ray,Vec3fa(camera.xfm.p), Vec3fa(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)), 0.0f, inf);
-  primary.ray.id = 0; // needs to encode rayID for filter
-  primary.transparency = 0.0f;
 
+  /* initialize ray */
+  Ray primary;
+  init_Ray(primary,Vec3fa(camera.xfm.p), Vec3fa(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)), 0.0f, inf);
+  float primary_transparency = 0.0f;
 
   while (true)
   {
-    context.userRayExt = &primary;
+    context.userRayExt = &primary_transparency;
 
     /* intersect ray with scene */
-    rtcIntersect1(data.g_scene,&context.context,RTCRayHit_(primary));
+    RTCIntersectArguments iargs;
+    rtcInitIntersectArguments(&iargs);
+    iargs.context = &context.context;
+    iargs.feature_mask = (RTCFeatureFlags) (FEATURE_MASK);
+#if USE_ARGUMENT_CALLBACKS
+    iargs.filter = intersectionFilter;
+#endif
+    rtcIntersect1(data.g_scene,RTCRayHit_(primary),&iargs);
     RayStats_addRay(stats);
 
     /* shade pixels */
-    if (primary.ray.geomID == RTC_INVALID_GEOMETRY_ID)
+    if (primary.geomID == RTC_INVALID_GEOMETRY_ID)
       break;
 
-    float opacity = 1.0f-primary.transparency;
-    Vec3fa diffuse = data.colors[primary.ray.primID];
+    float opacity = 1.0f-primary_transparency;
+    Vec3fa diffuse = data.colors[primary.primID];
     Vec3fa La = diffuse*0.5f;
     color = color + weight*opacity*La;
     Vec3fa lightDir = normalize(Vec3fa(-1,-1,-1));
 
     /* initialize shadow ray */
-    Ray2 shadow;
-    init_Ray(shadow.ray, primary.ray.org + primary.ray.tfar*primary.ray.dir, neg(lightDir), 0.001f, inf);
-    shadow.ray.id = 0; // needs to encode rayID for filter
-    shadow.transparency = 1.0f;
-    shadow.firstHit = 0;
-    shadow.lastHit = 0;
-    context.userRayExt = &shadow;
+    Ray shadow;
+    init_Ray(shadow, primary.org + primary.tfar*primary.dir, neg(lightDir), 0.001f, inf);
+    float shadow_transparency = 1.0f;
+    context.userRayExt = &shadow_transparency;
 
     /* trace shadow ray */
-    rtcOccluded1(data.g_scene,&context.context,RTCRay_(shadow));
+    RTCOccludedArguments sargs;
+    rtcInitOccludedArguments(&sargs);
+    sargs.context = &context.context;
+    sargs.feature_mask = (RTCFeatureFlags) (FEATURE_MASK);
+#if USE_ARGUMENT_CALLBACKS
+    sargs.filter = occlusionFilter;
+#endif
+    rtcOccluded1(data.g_scene,RTCRay_(shadow),&sargs);
     RayStats_addShadowRay(stats);
 
     /* add light contribution */
-    if (shadow.ray.tfar >= 0.0f) {
-      Vec3fa Ll = diffuse*shadow.transparency*clamp(-dot(lightDir,normalize(primary.ray.Ng)),0.0f,1.0f);
+    if (shadow.tfar >= 0.0f) {
+      Vec3fa Ll = diffuse*shadow_transparency*clamp(-dot(lightDir,normalize(primary.Ng)),0.0f,1.0f);
       color = color + weight*opacity*Ll;
     }
 
     /* shoot transmission ray */
-    weight *= primary.transparency;
-    primary.ray.tnear() = 1.001f*primary.ray.tfar;
-    primary.ray.tfar = (float)(inf);
-    primary.ray.geomID = RTC_INVALID_GEOMETRY_ID;
-    primary.ray.primID = RTC_INVALID_GEOMETRY_ID;
-    primary.transparency = 0.0f;
+    weight *= primary_transparency;
+    primary.tnear() = 1.001f*primary.tfar;
+    primary.tfar = (float)(inf);
+    primary.geomID = RTC_INVALID_GEOMETRY_ID;
+    primary.primID = RTC_INVALID_GEOMETRY_ID;
+    primary_transparency = 0.0f;
   }
 
   /* write color to framebuffer */
@@ -151,50 +152,15 @@ void renderTileStandard(int taskIndex,
   }
 }
 
-/******************************************************************************************/
-/*                               Stream Mode                                              */
-/******************************************************************************************/
-
-inline float gather(float& ptr, const unsigned int stride, const unsigned int pid, const unsigned int rid)
-{
-  float* uptr = (float*) (((char*)&ptr) + pid*stride);
-  return uptr[rid];
-}
-
-inline unsigned int gather(unsigned int& ptr, const unsigned int stride, const unsigned int pid, const unsigned int rid)
-{
-  unsigned int* uptr = (unsigned int*) (((char*)&ptr) + pid*stride);
-  return uptr[rid];
-}
-
-inline unsigned int gather(unsigned int& ptr, const unsigned int idx, const unsigned int stride, const unsigned int pid, const unsigned int rid)
-{
-  unsigned int* uptr = (unsigned int*) (((char*)&ptr) + pid*stride);
-  return uptr[rid + 1*idx];
-}
-
-inline void scatter(float& ptr, const unsigned int stride, const unsigned int pid, const unsigned int rid, float v) {
-  ((float*)(((char*)&ptr) + pid*stride))[rid] = v;
-}
-
-inline void scatter(unsigned int& ptr, const unsigned int stride, const unsigned int pid, const unsigned int rid, unsigned int v) {
-  ((unsigned int*)(((char*)&ptr) + pid*stride))[rid] = v;
-}
-
-inline void scatter(unsigned int& ptr, const unsigned int idx, const unsigned int stride, const unsigned int pid, const unsigned int rid, unsigned int v) {
-  ((unsigned int*)(((char*)&ptr) + pid*stride))[rid+1*idx] = v;
-}
-
-
 /* intersection filter function for single rays and packets */
-void intersectionFilter(const RTCFilterFunctionNArguments* args)
+RTC_SYCL_INDIRECTLY_CALLABLE void intersectionFilter(const RTCFilterFunctionNArguments* args)
 {
   /* avoid crashing when debug visualizations are used */
   if (args->context == nullptr) return;
 
   assert(args->N == 1);
   int* valid = args->valid;
-  const IntersectContext* context = (const IntersectContext*) args->context;
+  const RayQueryContext* context = (const RayQueryContext*) args->context;
   Ray* ray = (Ray*)args->ray;
   //RTCHit* hit = (RTCHit*)args->hit;
 
@@ -211,349 +177,36 @@ void intersectionFilter(const RTCFilterFunctionNArguments* args)
   /* otherwise accept hit and remember transparency */
   else
   {
-    Ray2* eray = (Ray2*) context->userRayExt;
-    eray->transparency = T;
-  }
-}
-
-/* intersection filter function for streams of general packets */
-void intersectionFilterN(const RTCFilterFunctionNArguments* args)
-{
-  int* valid = args->valid;
-  const IntersectContext* context = (const IntersectContext*) args->context;
-  struct RTCRayHitN* rayN = (struct RTCRayHitN*)args->ray;
-  //struct RTCHitN* hitN = args->hit;
-  const unsigned int N = args->N;
-                                  
-  /* avoid crashing when debug visualizations are used */
-  if (context == nullptr) return;
-
-  /* iterate over all rays in ray packet */
-  for (unsigned int ui=0; ui<N; ui+=1)
-  {
-    /* calculate loop and execution mask */
-    unsigned int vi = ui+0;
-    if (vi>=N) continue;
-
-    /* ignore inactive rays */
-    if (valid[vi] != -1) continue;
-
-    /* read ray/hit from ray structure */
-    RTCRayHit rtc_ray = rtcGetRayHitFromRayHitN(rayN,N,ui);
-    Ray* ray = (Ray*)&rtc_ray;
-
-    /* calculate transparency */
-    Vec3fa h = ray->org + ray->dir  * ray->tfar;
-    float T = transparencyFunction(h);
-
-    /* ignore hit if completely transparent */
-    if (T >= 1.0f) 
-      valid[vi] = 0;
-    /* otherwise accept hit and remember transparency */
-    else
-    {
-      /* decode ray IDs */
-      const unsigned int pid = ray->id / 1;
-      const unsigned int rid = ray->id % 1;
-      Ray2* ray2 = (Ray2*) context->userRayExt;
-      assert(ray2);
-      scatter(ray2->transparency,sizeof(Ray2),pid,rid,T);
-    }
+    float* transparency = (float*) context->userRayExt;
+    *transparency = T;
   }
 }
 
 /* occlusion filter function for single rays and packets */
-void occlusionFilter(const RTCFilterFunctionNArguments* args)
+RTC_SYCL_INDIRECTLY_CALLABLE void occlusionFilter(const RTCFilterFunctionNArguments* args)
 {
   /* avoid crashing when debug visualizations are used */
   if (args->context == nullptr) return;
 
   assert(args->N == 1);
   int* valid = args->valid;
-  const IntersectContext* context = (const IntersectContext*) args->context;
+  const RayQueryContext* context = (const RayQueryContext*) args->context;
   Ray* ray = (Ray*)args->ray;
-  RTCHit* hit = (RTCHit*)args->hit;
 
   /* ignore inactive rays */
   if (valid[0] != -1) return;
 
-  Ray2* ray2 = (Ray2*) context->userRayExt;
-  assert(ray2);
-
-  for (unsigned int i=ray2->firstHit; i<ray2->lastHit; i++) {
-    unsigned slot= i%HIT_LIST_LENGTH;
-    if (ray2->hit_geomIDs[slot] == hit->geomID && ray2->hit_primIDs[slot] == hit->primID) {
-      valid[0] = 0; return; // ignore duplicate intersections
-    }
-  }
-  /* store hit in hit list */
-  unsigned int slot = ray2->lastHit%HIT_LIST_LENGTH;
-  ray2->hit_geomIDs[slot] = hit->geomID;
-  ray2->hit_primIDs[slot] = hit->primID;
-  ray2->lastHit++;
-  if (ray2->lastHit - ray2->firstHit >= HIT_LIST_LENGTH)
-    ray2->firstHit++;
+  float* transparency = (float*) context->userRayExt;
+  assert(transparency);
 
   Vec3fa h = ray->org + ray->dir * ray->tfar;
 
   /* calculate and accumulate transparency */
   float T = transparencyFunction(h);
-  T *= ray2->transparency;
-  ray2->transparency = T;
+  T *= *transparency;
+  *transparency = T;
   if (T != 0.0f) 
     valid[0] = 0;
-}
-
-/* intersection filter function for streams of general packets */
-void occlusionFilterN(const RTCFilterFunctionNArguments* args)
-{
-  int* valid = args->valid;
-  const IntersectContext* context = (const IntersectContext*) args->context;
-  struct RTCRayHitN* rayN = (struct RTCRayHitN*)args->ray;
-  struct RTCHitN* hitN = args->hit;
-  const unsigned int N = args->N;
-                                  
-  /* avoid crashing when debug visualizations are used */
-  if (context == nullptr) return;
-
-  /* iterate over all rays in ray packet */
-  for (unsigned int ui=0; ui<N; ui+=1)
-  {
-    /* calculate loop and execution mask */
-    unsigned int vi = ui+0;
-    if (vi>=N) continue;
-
-    /* ignore inactive rays */
-    if (valid[vi] != -1) continue;
-
-    /* read ray/hit from ray structure */
-    RTCRayHit rtc_ray = rtcGetRayHitFromRayHitN(rayN,N,ui);
-    Ray* ray = (Ray*)&rtc_ray;
-
-    RTCHit hit = rtcGetHitFromHitN(hitN,N,ui);
-    const unsigned int hit_geomID = hit.geomID;
-    const unsigned int hit_primID = hit.primID;
-
-    /* decode ray IDs */
-    const unsigned int pid = ray->id / 1;
-    const unsigned int rid = ray->id % 1;
-    Ray2* ray2 = (Ray2*) context->userRayExt;
-    assert(ray2);
-
-    /* The occlusion filter function may be called multiple times with
-     * the same hit. We remember the last N hits, and skip duplicates. */
-    unsigned int ray2_firstHit = gather(ray2->firstHit,sizeof(Ray2),pid,rid);
-    unsigned int ray2_lastHit =  gather(ray2->lastHit ,sizeof(Ray2),pid,rid);
-    for (unsigned int i=ray2_firstHit; i<ray2_lastHit; i++)
-    {
-      unsigned int slot= i%HIT_LIST_LENGTH;
-      unsigned int last_geomID = gather(ray2->hit_geomIDs[0],slot,sizeof(Ray2),pid,rid);
-      unsigned int last_primID = gather(ray2->hit_primIDs[0],slot,sizeof(Ray2),pid,rid);
-      if (last_geomID == hit_geomID && last_primID == hit_primID) {
-        valid[vi] = 0; break; // ignore duplicate intersections
-      }
-    }
-    if (!valid[vi]) continue;
-
-    /* store hit in hit list */
-    unsigned int slot = ray2_lastHit%HIT_LIST_LENGTH;
-    scatter(ray2->hit_geomIDs[0],slot,sizeof(Ray2),pid,rid,hit_geomID);
-    scatter(ray2->hit_primIDs[0],slot,sizeof(Ray2),pid,rid,hit_primID);
-    ray2_lastHit++;
-    scatter(ray2->lastHit,sizeof(Ray2),pid,rid,ray2_lastHit);
-    if (ray2_lastHit - ray2_firstHit >= HIT_LIST_LENGTH)
-      scatter(ray2->firstHit,sizeof(Ray2),pid,rid,ray2_firstHit+1);
-
-    /* calculate transparency */
-    Vec3fa h = ray->org + ray->dir * ray->tfar;
-    float T = transparencyFunction(h);
-
-    /* accumulate transparency and store inside ray extensions */
-    T *= gather(ray2->transparency,sizeof(Ray2),pid,rid);
-    scatter(ray2->transparency,sizeof(Ray2),pid,rid,T);
-
-    /* reject a hit if not fully opqaue */
-    if (T != 0.0f) 
-      valid[vi] = 0;
-  }
-}
-
-/* renders a single screen tile */
-void renderTileStandardStream(int taskIndex,
-                              int threadIndex,
-                              int* pixels,
-                              const unsigned int width,
-                              const unsigned int height,
-                              const float time,
-                              const ISPCCamera& camera,
-                              const int numTilesX,
-                              const int numTilesY)
-{
-  const unsigned int tileY = taskIndex / numTilesX;
-  const unsigned int tileX = taskIndex - tileY * numTilesX;
-  const unsigned int x0 = tileX * TILE_SIZE_X;
-  const unsigned int x1 = min(x0+TILE_SIZE_X,width);
-  const unsigned int y0 = tileY * TILE_SIZE_Y;
-  const unsigned int y1 = min(y0+TILE_SIZE_Y,height);
-
-  RayStats& stats = g_stats[threadIndex];
-
-  Ray2 primary_stream[TILE_SIZE_X*TILE_SIZE_Y];
-  Ray2 shadow_stream[TILE_SIZE_X*TILE_SIZE_Y];
-  Vec3fa color_stream[TILE_SIZE_X*TILE_SIZE_Y];
-  float weight_stream[TILE_SIZE_X*TILE_SIZE_Y];
-  bool valid_stream[TILE_SIZE_X*TILE_SIZE_Y];
-
-  /* generate stream of primary rays */
-  int N = 0;
-  int numActive = 0;
-  for (unsigned int y=y0; y<y1; y++) for (unsigned int x=x0; x<x1; x++)
-  {
-    /* ISPC workaround for mask == 0 */
-    
-
-    /* initialize variables */
-    numActive++;
-    color_stream[N] = Vec3fa(0.0f);
-    weight_stream[N] = 1.0f;
-    bool mask = 1; { valid_stream[N] = mask; }
-
-    /* initialize ray */
-    Ray2& primary = primary_stream[N];
-    mask = 1; { // invalidates inactive rays
-      primary.ray.tnear() = mask ? 0.0f         : (float)(pos_inf);
-      primary.ray.tfar  = mask ? (float)(inf) : (float)(neg_inf);
-    }
-    init_Ray(primary.ray, Vec3fa(camera.xfm.p), Vec3fa(normalize((float)x*camera.xfm.l.vx + (float)y*camera.xfm.l.vy + camera.xfm.l.vz)), primary.ray.tnear(), primary.ray.tfar);
- 
-    primary.ray.id = N*1 + 0;
-    primary.transparency = 0.0f;
-
-    N++;
-    RayStats_addRay(stats);
-  }
-
-  Vec3fa lightDir = normalize(Vec3fa(-1,-1,-1));
-
-  while (numActive)
-  {
-    /* trace rays */
-    IntersectContext primary_context;
-    InitIntersectionContext(&primary_context);
-    primary_context.context.flags = g_iflags_coherent;
-    primary_context.userRayExt = &primary_stream;
-    rtcIntersect1M(data.g_scene,&primary_context.context,(RTCRayHit*)&primary_stream,N,sizeof(Ray2));
-
-    /* terminate rays and update color */
-    N = -1;
-    for (unsigned int y=y0; y<y1; y++) for (unsigned int x=x0; x<x1; x++)
-    {
-      N++;
-      /* ISPC workaround for mask == 0 */
-      
-
-      /* invalidate shadow rays by default */
-      Ray2& shadow = shadow_stream[N];
-      {
-        shadow.ray.tnear() = (float)(pos_inf);
-        shadow.ray.tfar  = (float)(neg_inf);
-      }
-
-      /* ignore invalid rays */
-      if (valid_stream[N] == false) continue;
-
-      /* terminate rays that hit nothing */
-      if (primary_stream[N].ray.geomID == RTC_INVALID_GEOMETRY_ID) {
-        valid_stream[N] = false;
-        continue;
-      }
-
-      /* update color */
-      Ray2& primary = primary_stream[N];
-      float opacity = 1.0f-primary.transparency;
-      Vec3fa diffuse = data.colors[primary.ray.primID];
-      Vec3fa La = diffuse*0.5f;
-      color_stream[N] = color_stream[N] + weight_stream[N]*opacity*La;
-
-      /* initialize shadow ray */
-      bool mask = 1; {
-        shadow.ray.tnear() = mask ? 0.001f       : (float)(pos_inf);
-        shadow.ray.tfar  = mask ? (float)(inf) : (float)(neg_inf);
-      }
-      init_Ray(shadow.ray, primary.ray.org + primary.ray.tfar*primary.ray.dir, neg(lightDir), shadow.ray.tnear(), shadow.ray.tfar);
-      shadow.ray.id = N*1 + 0;
-      shadow.transparency = 1.0f;
-      shadow.firstHit = 0;
-      shadow.lastHit = 0;
-      RayStats_addShadowRay(stats);
-    }
-    N++;
-
-    /* trace shadow rays */
-    IntersectContext shadow_context;
-    InitIntersectionContext(&shadow_context);
-    shadow_context.context.flags = g_iflags_coherent;
-    shadow_context.userRayExt = &shadow_stream;
-    rtcOccluded1M(data.g_scene,&shadow_context.context,(RTCRay*)&shadow_stream,N,sizeof(Ray2));
-
-    /* add light contribution and generate transmission ray */
-    N = -1;
-    numActive = 0;
-    for (unsigned int y=y0; y<y1; y++) for (unsigned int x=x0; x<x1; x++)
-    {
-      N++;
-      /* ISPC workaround for mask == 0 */
-      
-
-      /* invalidate rays by default */
-      Ray2& primary = primary_stream[N];
-      float primary_tfar = primary.ray.tfar;
-      {
-        primary.ray.tnear() = (float)(pos_inf);
-        primary.ray.tfar  = (float)(neg_inf);
-      }
-
-      /* ignore invalid rays */
-      if (valid_stream[N] == false) continue;
-      numActive++;
-
-      /* add light contribution */
-      float opacity = 1.0f-primary.transparency;
-      Vec3fa diffuse = data.colors[primary.ray.primID];
-      Ray2& shadow = shadow_stream[N];
-      if (shadow.ray.tfar >= 0.0f) {
-        Vec3fa Ll = diffuse*shadow.transparency*clamp(-dot(lightDir,normalize(primary.ray.Ng)),0.0f,1.0f);
-        color_stream[N] = color_stream[N] + weight_stream[N]*opacity*Ll;
-      }
-
-      /* initialize transmission ray */
-      weight_stream[N] *= primary.transparency;
-      bool mask = 1; {
-        primary.ray.tnear() = mask ? 1.001f*primary_tfar : (float)(pos_inf);
-        primary.ray.tfar  = mask ? (float)(inf)        : (float)(neg_inf);
-      }
-      primary.ray.geomID = RTC_INVALID_GEOMETRY_ID;
-      primary.ray.primID = RTC_INVALID_GEOMETRY_ID;
-      primary.transparency = 0.0f;
-      RayStats_addRay(stats);
-    }
-    N++;
-  }
-
-  /* framebuffer writeback */
-  N = 0;
-  for (unsigned int y=y0; y<y1; y++) for (unsigned int x=x0; x<x1; x++)
-  {
-    /* ISPC workaround for mask == 0 */
-    
-
-    /* write color to framebuffer */
-    unsigned int r = (unsigned int) (255.0f * clamp(color_stream[N].x,0.0f,1.0f));
-    unsigned int g = (unsigned int) (255.0f * clamp(color_stream[N].y,0.0f,1.0f));
-    unsigned int b = (unsigned int) (255.0f * clamp(color_stream[N].z,0.0f,1.0f));
-    pixels[y*width+x] = (b << 16) + (g << 8) + r;
-    N++;
-  }
 }
 
 /******************************************************************************************/
@@ -614,10 +267,12 @@ unsigned int addCube (RTCScene scene_i, const Vec3fa& offset, const Vec3fa& scal
     Vec3fa vtx = Vec3fa(x,y,z);
     ptr[i] = Vec3fa(offset+LinearSpace3fa::rotate(Vec3fa(0,1,0),rotation)*LinearSpace3fa::scale(scale)*vtx);
   }
-  rtcSetSharedGeometryBuffer(geom, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, cube_tri_indices, 0, 3*sizeof(unsigned int), NUM_TRI_FACES);
+  //rtcSetSharedGeometryBuffer(geom, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, cube_tri_indices, 0, 3*sizeof(unsigned int), NUM_TRI_FACES);
+  Vec3i* index = (Vec3i*)rtcSetNewGeometryBuffer(geom, RTC_BUFFER_TYPE_INDEX, 0, RTC_FORMAT_UINT3, 3*sizeof(unsigned int), NUM_TRI_FACES);
+  memcpy(index, cube_tri_indices, 3*sizeof(unsigned int) * NUM_TRI_FACES);
 
   /* create per-triangle color array */
-  data.colors = (Vec3fa*) alignedMalloc(12*sizeof(Vec3fa),16);
+  data.colors = (Vec3fa*) alignedUSMMalloc((12)*sizeof(Vec3fa),16);
   data.colors[0] = Vec3fa(1,0,0); // left side
   data.colors[1] = Vec3fa(1,0,0);
   data.colors[2] = Vec3fa(0,1,0); // right side
@@ -632,16 +287,12 @@ unsigned int addCube (RTCScene scene_i, const Vec3fa& offset, const Vec3fa& scal
   data.colors[11] = Vec3fa(1,1,0);
 
   /* set intersection filter for the cube */
-  if (g_mode == MODE_NORMAL && nativePacketSupported(g_device))
-  {
-    rtcSetGeometryIntersectFilterFunction(geom,intersectionFilter);
-    rtcSetGeometryOccludedFilterFunction(geom,occlusionFilter);
-  }
-  else
-  {
-    rtcSetGeometryIntersectFilterFunction(geom,intersectionFilterN);
-    rtcSetGeometryOccludedFilterFunction(geom,occlusionFilterN);
-  }
+#if USE_ARGUMENT_CALLBACKS
+  rtcSetGeometryEnableFilterFunctionFromArguments(geom,true);
+#else
+  rtcSetGeometryIntersectFilterFunction(geom,data.intersectionFilter);
+  rtcSetGeometryOccludedFilterFunction(geom,data.occlusionFilter);
+#endif
 
   rtcCommitGeometry(geom);
   unsigned int geomID = rtcAttachGeometry(scene_i,geom);
@@ -661,7 +312,7 @@ unsigned int addSubdivCube (RTCScene scene_i)
   for (unsigned int i=0; i<NUM_QUAD_INDICES; i++) level[i] = 4;
 
   /* create face color array */
-  data.colors = (Vec3fa*) alignedMalloc(6*sizeof(Vec3fa),16);
+  data.colors = (Vec3fa*) alignedUSMMalloc((6)*sizeof(Vec3fa),16);
   data.colors[0] = Vec3fa(1,0,0); // left side
   data.colors[1] = Vec3fa(0,1,0); // right side
   data.colors[2] = Vec3fa(0.5f);  // bottom side
@@ -670,16 +321,12 @@ unsigned int addSubdivCube (RTCScene scene_i)
   data.colors[5] = Vec3fa(1,1,0); // back side
 
   /* set intersection filter for the cube */
-  if (g_mode == MODE_NORMAL && nativePacketSupported(g_device))
-  {
-    rtcSetGeometryIntersectFilterFunction(geom,intersectionFilter);
-    rtcSetGeometryOccludedFilterFunction(geom,occlusionFilter);
-  }
-  else
-  {
-    rtcSetGeometryIntersectFilterFunction(geom,intersectionFilterN);
-    rtcSetGeometryOccludedFilterFunction(geom,occlusionFilterN);
-  }
+#if USE_ARGUMENT_CALLBACKS
+  rtcSetGeometryEnableFilterFunctionFromArguments(geom,true);
+#else
+  rtcSetGeometryIntersectFilterFunction(geom,data.intersectionFilter);
+  rtcSetGeometryOccludedFilterFunction(geom,data.occlusionFilter);
+#endif
 
   rtcCommitGeometry(geom);
   unsigned int geomID = rtcAttachGeometry(scene_i,geom);
@@ -714,9 +361,15 @@ unsigned int addGroundPlane (RTCScene scene_i)
 /* called by the C++ code for initialization */
 extern "C" void device_init (char* cfg)
 {
+#if !USE_ARGUMENT_CALLBACKS
+  data.intersectionFilter = GET_FUNCTION_POINTER(intersectionFilter);
+  data.occlusionFilter    = GET_FUNCTION_POINTER(occlusionFilter   );
+#endif
+  
   /* create scene */
   g_scene = data.g_scene = rtcNewScene(g_device);
-  rtcSetSceneBuildQuality(data.g_scene, RTC_BUILD_QUALITY_HIGH); // high quality mode to test if we filter out duplicated intersections
+  rtcSetSceneFlags(data.g_scene, RTC_SCENE_FLAG_FILTER_FUNCTION_IN_ARGUMENTS);
+  rtcSetSceneBuildQuality(data.g_scene, RTC_BUILD_QUALITY_MEDIUM);
 
   /* add cube */
   addCube(data.g_scene,Vec3fa(0.0f,0.0f,0.0f),Vec3fa(10.0f,1.0f,1.0f),45.0f);
@@ -738,10 +391,7 @@ void renderTileTask (int taskIndex, int threadIndex, int* pixels,
                          const int numTilesX,
                          const int numTilesY)
 {
-  if (g_mode == MODE_NORMAL)
-    renderTileStandard(taskIndex,threadIndex,pixels,width,height,time,camera,numTilesX,numTilesY);
-  else
-    renderTileStandardStream(taskIndex,threadIndex,pixels,width,height,time,camera,numTilesX,numTilesY);
+  renderTileStandard(taskIndex,threadIndex,pixels,width,height,time,camera,numTilesX,numTilesY);
 }
 
 extern "C" void renderFrameStandard (int* pixels,
@@ -750,6 +400,25 @@ extern "C" void renderFrameStandard (int* pixels,
                           const float time,
                           const ISPCCamera& camera)
 {
+#if defined(EMBREE_SYCL_TUTORIAL) && !defined(EMBREE_SYCL_RT_SIMULATION)
+  TutorialData ldata = data;
+  sycl::event event = global_gpu_queue->submit([=](sycl::handler& cgh){
+    const sycl::nd_range<2> nd_range = make_nd_range(height,width);
+    cgh.parallel_for(nd_range,[=](sycl::nd_item<2> item) {
+      const unsigned int x = item.get_global_id(1); if (x >= width ) return;
+      const unsigned int y = item.get_global_id(0); if (y >= height) return;
+      RayStats stats;
+      renderPixelStandard(ldata,x,y,pixels,width,height,time,camera,stats);
+    });
+  });
+  global_gpu_queue->wait_and_throw();
+
+  const auto t0 = event.template get_profiling_info<sycl::info::event_profiling::command_start>();
+  const auto t1 = event.template get_profiling_info<sycl::info::event_profiling::command_end>();
+  const double dt = (t1-t0)*1E-9;
+  ((ISPCCamera*)&camera)->render_time = dt;
+  
+#else
   const int numTilesX = (width +TILE_SIZE_X-1)/TILE_SIZE_X;
   const int numTilesY = (height+TILE_SIZE_Y-1)/TILE_SIZE_Y;
   parallel_for(size_t(0),size_t(numTilesX*numTilesY),[&](const range<size_t>& range) {
@@ -757,6 +426,7 @@ extern "C" void renderFrameStandard (int* pixels,
     for (size_t i=range.begin(); i<range.end(); i++)
       renderTileTask((int)i,threadIndex,pixels,width,height,time,camera,numTilesX,numTilesY);
   }); 
+#endif
 }
 
 /* called by the C++ code to render */

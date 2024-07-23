@@ -8,10 +8,64 @@
 
 namespace embree
 {
+  RTCFeatureFlags operator |= (RTCFeatureFlags& a, RTCFeatureFlags b) {
+    return a = (RTCFeatureFlags) (a | b);
+  }
+
+  std::string to_string(RTCFeatureFlags features)
+  {
+    std::string out = "";
+    if (features & RTC_FEATURE_FLAG_MOTION_BLUR) out += "MOTION_BLUR";
+    if (features & RTC_FEATURE_FLAG_TRIANGLE) out += "TRIANGLE ";
+    if (features & RTC_FEATURE_FLAG_QUAD) out += "QUAD ";
+    if (features & RTC_FEATURE_FLAG_GRID) out += "GRID ";
+    if (features & RTC_FEATURE_FLAG_SUBDIVISION) out += "SUBDIVISION ";
+    if (features & RTC_FEATURE_FLAG_CONE_LINEAR_CURVE) out += "CONE_LINEAR_CURVE ";
+    if (features & RTC_FEATURE_FLAG_ROUND_LINEAR_CURVE ) out += "ROUND_LINEAR_CURVE ";
+    if (features & RTC_FEATURE_FLAG_FLAT_LINEAR_CURVE) out += "FLAT_LINEAR_CURVE ";
+    if (features & RTC_FEATURE_FLAG_ROUND_BEZIER_CURVE) out += "ROUND_BEZIER_CURVE ";
+    if (features & RTC_FEATURE_FLAG_FLAT_BEZIER_CURVE) out += "FLAT_BEZIER_CURVE ";
+    if (features & RTC_FEATURE_FLAG_NORMAL_ORIENTED_BEZIER_CURVE) out += "NORMAL_ORIENTED_BEZIER_CURVE ";
+    if (features & RTC_FEATURE_FLAG_ROUND_BSPLINE_CURVE) out += "ROUND_BSPLINE_CURVE ";
+    if (features & RTC_FEATURE_FLAG_FLAT_BSPLINE_CURVE) out += "FLAT_BSPLINE_CURVE ";
+    if (features & RTC_FEATURE_FLAG_NORMAL_ORIENTED_BSPLINE_CURVE) out += "NORMAL_ORIENTED_BSPLINE_CURVE ";
+    if (features & RTC_FEATURE_FLAG_ROUND_HERMITE_CURVE) out += "ROUND_HERMITE_CURVE ";
+    if (features & RTC_FEATURE_FLAG_FLAT_HERMITE_CURVE) out += "FLAT_HERMITE_CURVE ";
+    if (features & RTC_FEATURE_FLAG_NORMAL_ORIENTED_HERMITE_CURVE) out += "NORMAL_ORIENTED_HERMITE_CURVE ";
+    if (features & RTC_FEATURE_FLAG_ROUND_CATMULL_ROM_CURVE) out += "ROUND_CATMULL_ROM_CURVE ";
+    if (features & RTC_FEATURE_FLAG_FLAT_CATMULL_ROM_CURVE) out += "FLAT_CATMULL_ROM_CURVE ";
+    if (features & RTC_FEATURE_FLAG_NORMAL_ORIENTED_CATMULL_ROM_CURVE) out += "NORMAL_ORIENTED_CATMULL_ROM_CURVE ";
+    if (features & RTC_FEATURE_FLAG_SPHERE_POINT) out += "SPHERE_POINT ";
+    if (features & RTC_FEATURE_FLAG_DISC_POINT) out += "DISC_POINT ";
+    if (features & RTC_FEATURE_FLAG_ORIENTED_DISC_POINT) out += "ORIENTED_DISC_POINT ";
+    if (features & RTC_FEATURE_FLAG_INSTANCE) out += "INSTANCE ";
+    if (features & RTC_FEATURE_FLAG_INSTANCE_ARRAY) out += "INSTANCE_ARRAY ";
+    if (features & RTC_FEATURE_FLAG_FILTER_FUNCTION_IN_ARGUMENTS) out += "FILTER_FUNCTION_IN_ARGUMENTS ";
+    if (features & RTC_FEATURE_FLAG_FILTER_FUNCTION_IN_GEOMETRY) out += "FILTER_FUNCTION_IN_GEOMETRY ";
+    if (features & RTC_FEATURE_FLAG_USER_GEOMETRY_CALLBACK_IN_ARGUMENTS) out += "USER_GEOMETRY_CALLBACK_IN_ARGUMENTS ";
+    if (features & RTC_FEATURE_FLAG_USER_GEOMETRY_CALLBACK_IN_GEOMETRY) out += "USER_GEOMETRY_CALLBACK_IN_GEOMETRY ";
+    if (out == "") return "NONE";
+    return out;
+  }
+  
   extern "C" {
     int g_instancing_mode = SceneGraph::INSTANCING_NONE;
     float g_min_width_max_radius_scale = 1.0f;
     AssignShaderTy assignShadersFunc = nullptr;
+  }
+
+  template<typename Ty>
+  Ty* copyArrayToUSM(const avector<Ty>& in) {
+    Ty* out = (Ty*)alignedUSMMalloc(in.size()*sizeof(Ty));
+    memcpy(out,in.data(),in.size()*sizeof(Ty));
+    return out;
+  }
+
+  template<typename Ty>
+  Ty* copyArrayToUSM(const std::vector<Ty>& in) {
+    Ty* out = (Ty*)alignedUSMMalloc(in.size()*sizeof(Ty));
+    memcpy(out,in.data(),in.size()*sizeof(Ty));
+    return out;
   }
 
   extern "C" int g_animation_mode;
@@ -25,6 +79,7 @@ namespace embree
     case TRIANGLE_MESH: delete (ISPCTriangleMesh*) geom; break;
     case SUBDIV_MESH  : delete (ISPCSubdivMesh*) geom; break;
     case INSTANCE: delete (ISPCInstance*) geom; break;
+    case INSTANCE_ARRAY: delete (ISPCInstanceArray*) geom; break;
     case GROUP: delete (ISPCGroup*) geom; break;
     case QUAD_MESH: delete (ISPCQuadMesh*) geom; break;
     case CURVES: delete (ISPCHairSet*) geom; break;
@@ -33,23 +88,37 @@ namespace embree
     default: assert(false); break;
     }
   }
+
+  ISPCScene::ISPCScene(RTCDevice device, unsigned int numGeometries, unsigned int numMaterials, unsigned int numLights)
+    : scene(rtcNewScene(device)), geometries(nullptr), materials(nullptr), numGeometries(numGeometries), numMaterials(numMaterials), lights(0), numLights(numLights), tutorialScene(nullptr)
+  {
+    geometries = (ISPCGeometry**) alignedUSMMalloc(numGeometries*sizeof(ISPCGeometry*));
+    for (size_t i=0; i<numGeometries; i++) geometries[i] = nullptr;
+    
+    materials = (ISPCMaterial**) alignedUSMMalloc(numMaterials*sizeof(ISPCMaterial*));
+    for (size_t i=0; i<numMaterials; i++) materials[i] = nullptr;
+    
+    lights = (Light**) alignedUSMMalloc(numLights*sizeof(Light*));
+    for (size_t i=0; i<numLights; i++) lights[i] = nullptr;
+  }
   
   ISPCScene::ISPCScene(RTCDevice device, TutorialScene* in)
     : scene(rtcNewScene(device)), tutorialScene(in)
   {
     SceneGraph::opaque_geometry_destruction = (void(*)(void*)) deleteGeometry;
-    
-    geometries = new ISPCGeometry*[in->geometries.size()];
+
+    geometries = (ISPCGeometry**) alignedUSMMalloc(sizeof(ISPCGeometry*)*in->geometries.size());
+
     for (size_t i=0; i<in->geometries.size(); i++)
       geometries[i] = convertGeometry(device,in,in->geometries[i]);
     numGeometries = unsigned(in->geometries.size());
     
-    materials = new ISPCMaterial*[in->materials.size()];
+    materials = (ISPCMaterial**) alignedUSMMalloc(sizeof(ISPCMaterial*)*in->materials.size());
     for (size_t i=0; i<in->materials.size(); i++)
       materials[i] = (ISPCMaterial*) in->materials[i]->material();
     numMaterials = unsigned(in->materials.size());
     
-    lights = new Light*[in->lights.size()];
+    lights = (Light**) alignedUSMMalloc(sizeof(Light*)*in->lights.size());
     numLights = 0;
     for (size_t i=0; i<in->lights.size(); i++)
     {
@@ -60,11 +129,12 @@ namespace embree
 
   ISPCScene::~ISPCScene()
   {
-    delete[] geometries;
-    delete[] materials;
+    alignedUSMFree(geometries);
+    alignedUSMFree(materials);
+
     for (size_t i=0; i<numLights; i++)
       Light_destroy(lights[i]);
-    delete[] lights;
+    alignedUSMFree(lights);
   }
   
   Light* ISPCScene::convertLight(Ref<SceneGraph::LightNode> in)
@@ -131,35 +201,72 @@ namespace embree
 
     rtcCommitScene(scene);
   }
+
+  ISPCTriangleMesh::ISPCTriangleMesh (RTCDevice device, unsigned int numTriangles, unsigned int numVertices, bool hasNormals, bool hasTexcoords, unsigned int numTimeSteps)
+    : geom(TRIANGLE_MESH),
+      positions(nullptr), normals(nullptr), texcoords(nullptr), triangles(nullptr), startTime(0.0f), endTime(1.0f),
+      numTimeSteps(numTimeSteps), numVertices(numVertices), numTriangles(numTriangles)
+  {
+    assert(numTimeSteps);
+
+    geom.geometry = rtcNewGeometry (device, RTC_GEOMETRY_TYPE_TRIANGLE);
+    
+    positions = (Vec3fa**) alignedUSMMalloc(sizeof(Vec3fa*)*numTimeSteps);
+    for (size_t i=0; i<numTimeSteps; i++)
+      positions[i] = (Vec3fa*) alignedUSMMalloc(sizeof(Vec3fa)*numVertices);
+
+    if (hasNormals) {
+      normals = (Vec3fa**) alignedUSMMalloc(sizeof(Vec3fa*)*numTimeSteps);
+      for (size_t i=0; i<numTimeSteps; i++)
+        normals[i] = (Vec3fa*) alignedUSMMalloc(sizeof(Vec3fa)*numVertices);
+    }
+
+    if (hasTexcoords)
+      texcoords = (Vec2f*) alignedUSMMalloc(sizeof(Vec2f)*numVertices);
+
+    triangles = (ISPCTriangle*) alignedUSMMalloc(sizeof(ISPCTriangle)*numTriangles);
+  }
   
   ISPCTriangleMesh::ISPCTriangleMesh (RTCDevice device, TutorialScene* scene_in, Ref<SceneGraph::TriangleMeshNode> in) 
     : geom(TRIANGLE_MESH), positions(nullptr), normals(nullptr)
   {
     geom.geometry = rtcNewGeometry (device, RTC_GEOMETRY_TYPE_TRIANGLE);
-    
-    positions = new Vec3fa*[in->numTimeSteps()];
+   
+    positions = (Vec3fa**) alignedUSMMalloc(sizeof(Vec3fa*)*in->numTimeSteps());
     for (size_t i=0; i<in->numTimeSteps(); i++)
-      positions[i] = in->positions[i].data();
+      positions[i] = copyArrayToUSM(in->positions[i]);
     
     if (in->normals.size()) {
-      normals = new Vec3fa*[in->numTimeSteps()];
+      normals = (Vec3fa**) alignedUSMMalloc(sizeof(Vec3fa*)*in->numTimeSteps());
       for (size_t i=0; i<in->numTimeSteps(); i++)
-        normals[i] = in->normals[i].data();
+        normals[i] = copyArrayToUSM(in->normals[i]);
     }
     
-    texcoords = in->texcoords.data();
-    triangles = (ISPCTriangle*) in->triangles.data();
+    texcoords = copyArrayToUSM(in->texcoords);
+
     startTime = in->time_range.lower;
     endTime   = in->time_range.upper;
     numTimeSteps = (unsigned) in->numTimeSteps();
     numVertices = (unsigned) in->numVertices();
     numTriangles = (unsigned) in->numPrimitives();
     geom.materialID = scene_in->materialID(in->material);
+    triangles = (ISPCTriangle*) copyArrayToUSM(in->triangles);
   }
 
-  ISPCTriangleMesh::~ISPCTriangleMesh () {
-    if (positions) delete[] positions;
-    if (normals) delete[] normals;
+  ISPCTriangleMesh::~ISPCTriangleMesh ()
+  {
+    if (positions) {
+      for (size_t i=0; i<numTimeSteps; i++) alignedUSMFree(positions[i]);
+      alignedUSMFree(positions);
+    }
+    
+    if (normals) {
+      for (size_t i=0; i<numTimeSteps; i++) alignedUSMFree(normals[i]);
+      alignedUSMFree(normals);
+    }
+
+    alignedUSMFree(texcoords);
+    alignedUSMFree(triangles);
   }
 
   void ISPCTriangleMesh::commit()
@@ -183,18 +290,18 @@ namespace embree
   {
     geom.geometry = rtcNewGeometry (device, RTC_GEOMETRY_TYPE_QUAD);
     
-    positions = new Vec3fa*[in->numTimeSteps()];
+    positions = (Vec3fa**) alignedUSMMalloc(sizeof(Vec3fa*)*in->numTimeSteps());
     for (size_t i=0; i<in->numTimeSteps(); i++)
-      positions[i] = in->positions[i].data();
+      positions[i] = copyArrayToUSM(in->positions[i]);
 
     if (in->normals.size()) {
-      normals = new Vec3fa*[in->numTimeSteps()];
+      normals = (Vec3fa**) alignedUSMMalloc(sizeof(Vec3fa*)*in->numTimeSteps());
       for (size_t i=0; i<in->numTimeSteps(); i++)
-        normals[i] = in->normals[i].data();
+        normals[i] = copyArrayToUSM(in->normals[i]);
     }
     
-    texcoords = in->texcoords.data();
-    quads = (ISPCQuad*) in->quads.data();
+    texcoords = copyArrayToUSM(in->texcoords);
+    quads = (ISPCQuad*) copyArrayToUSM(in->quads);
     startTime = in->time_range.lower;
     endTime   = in->time_range.upper;
     numTimeSteps = (unsigned) in->numTimeSteps();
@@ -203,9 +310,20 @@ namespace embree
     geom.materialID = scene_in->materialID(in->material);
   }
 
-  ISPCQuadMesh::~ISPCQuadMesh () {
-    if (positions) delete[] positions;
-    if (normals) delete[] normals;
+  ISPCQuadMesh::~ISPCQuadMesh ()
+  {
+    if (positions) {
+      for (size_t i=0; i<numTimeSteps; i++) alignedUSMFree(positions[i]);
+      alignedUSMFree(positions);
+    }
+    
+    if (normals) {
+      for (size_t i=0; i<numTimeSteps; i++) alignedUSMFree(normals[i]);
+      alignedUSMFree(normals);
+    }
+
+    alignedUSMFree(texcoords);
+    alignedUSMFree(quads);
   }
 
   void ISPCQuadMesh::commit()
@@ -229,21 +347,27 @@ namespace embree
   {
     geom.geometry = rtcNewGeometry (device, RTC_GEOMETRY_TYPE_GRID);
     
-    positions = new Vec3fa*[in->numTimeSteps()];
+    positions = (Vec3fa**) alignedUSMMalloc(sizeof(Vec3fa*)*in->numTimeSteps());
     for (size_t i=0; i<in->numTimeSteps(); i++)
-      positions[i] = in->positions[i].data();
+      positions[i] = copyArrayToUSM(in->positions[i]);
 
-    grids = (ISPCGrid*) in->grids.data();
     startTime = in->time_range.lower;
     endTime   = in->time_range.upper;
     numTimeSteps = (unsigned) in->numTimeSteps();
     numVertices = (unsigned) in->numVertices();
     numGrids = (unsigned) in->numPrimitives();
     geom.materialID = scene_in->materialID(in->material);
+    grids = (ISPCGrid*) copyArrayToUSM(in->grids);
   }
 
-  ISPCGridMesh::~ISPCGridMesh () {
-    if (positions) delete[] positions;
+  ISPCGridMesh::~ISPCGridMesh ()
+  {
+    if (positions) {
+      for (size_t i=0; i<numTimeSteps; i++) alignedUSMFree(positions[i]);
+      alignedUSMFree(positions);
+    }
+
+    alignedUSMFree(grids);
   }
 
   void ISPCGridMesh::commit()
@@ -380,32 +504,32 @@ namespace embree
   {
     geom.geometry = rtcNewGeometry(device, type);
     
-    positions = new Vec3fa*[in->numTimeSteps()];
+    positions = (Vec3fa**) alignedUSMMalloc(sizeof(Vec3fa*)*in->numTimeSteps());
     for (size_t i=0; i<in->numTimeSteps(); i++)
-      positions[i] = (Vec3fa*) in->positions[i].data();
+      positions[i] = (Vec3fa*) copyArrayToUSM(in->positions[i]);
 
     if (in->normals.size()) {
-      normals = new Vec3fa*[in->numTimeSteps()];
+      normals = (Vec3fa**) alignedUSMMalloc(sizeof(Vec3fa*)*in->numTimeSteps());
       for (size_t i=0; i<in->numTimeSteps(); i++)
-        normals[i] = in->normals[i].data();
+        normals[i] = copyArrayToUSM(in->normals[i]);
     }
 
     if (in->tangents.size()) {
-      tangents = new Vec3fa*[in->numTimeSteps()];
+      tangents = (Vec3fa**) alignedUSMMalloc(sizeof(Vec3fa*)*in->numTimeSteps());
       for (size_t i=0; i<in->numTimeSteps(); i++)
-        tangents[i] = (Vec3fa*) in->tangents[i].data();
+        tangents[i] = (Vec3fa*) copyArrayToUSM(in->tangents[i]);
     }
 
     if (in->dnormals.size()) {
-      dnormals = new Vec3fa*[in->numTimeSteps()];
+      dnormals = (Vec3fa**) alignedUSMMalloc(sizeof(Vec3fa*)*in->numTimeSteps());
       for (size_t i=0; i<in->numTimeSteps(); i++)
-        dnormals[i] = in->dnormals[i].data();
+        dnormals[i] = copyArrayToUSM(in->dnormals[i]);
     }
     
-    hairs = (ISPCHair*) in->hairs.data();
+    hairs = (ISPCHair*) copyArrayToUSM(in->hairs);
 
     if (in->flags.size())
-      flags = (unsigned char*)in->flags.data();
+      flags = (unsigned char*) copyArrayToUSM(in->flags);
     
     startTime = in->time_range.lower;
     endTime   = in->time_range.upper;
@@ -416,11 +540,30 @@ namespace embree
     tessellation_rate = in->tessellation_rate;
   }
 
-  ISPCHairSet::~ISPCHairSet() {
-    delete[] positions;
-    delete[] normals;
-    delete[] tangents;
-    delete[] dnormals;
+  ISPCHairSet::~ISPCHairSet()
+  {
+    if (positions) {
+      for (size_t i=0; i<numTimeSteps; i++) alignedUSMFree(positions[i]);
+      alignedUSMFree(positions);
+    }
+    
+    if (normals) {
+      for (size_t i=0; i<numTimeSteps; i++) alignedUSMFree(normals[i]);
+      alignedUSMFree(normals);
+    }
+
+    if (tangents) {
+      for (size_t i=0; i<numTimeSteps; i++) alignedUSMFree(tangents[i]);
+      alignedUSMFree(tangents);
+    }
+    
+    if (dnormals) {
+      for (size_t i=0; i<numTimeSteps; i++) alignedUSMFree(dnormals[i]);
+      alignedUSMFree(dnormals);
+    }
+
+    alignedUSMFree(hairs);
+    alignedUSMFree(flags);
   }
 
   void ISPCHairSet::commit()
@@ -475,14 +618,14 @@ namespace embree
   {
     geom.geometry = rtcNewGeometry(device, type);
     
-    positions = new Vec3fa*[in->numTimeSteps()];
+    positions = (Vec3fa**) alignedUSMMalloc(sizeof(Vec3fa*)*in->numTimeSteps());
     for (size_t i=0; i<in->numTimeSteps(); i++)
-      positions[i] = (Vec3fa*) in->positions[i].data();
+      positions[i] = (Vec3fa*) copyArrayToUSM(in->positions[i]);
 
     if (in->normals.size()) {
-      normals = new Vec3fa*[in->numTimeSteps()];
+      normals = (Vec3fa**) alignedUSMMalloc(sizeof(Vec3fa*)*in->numTimeSteps());
       for (size_t i=0; i<in->numTimeSteps(); i++)
-        normals[i] = in->normals[i].data();
+        normals[i] = copyArrayToUSM(in->normals[i]);
     }
 
     startTime = in->time_range.lower;
@@ -492,9 +635,17 @@ namespace embree
     geom.materialID = scene_in->materialID(in->material);
   }
 
-  ISPCPointSet::~ISPCPointSet () {
-    if (positions) delete[] positions;
-    if (normals) delete[] normals;
+  ISPCPointSet::~ISPCPointSet ()
+  {
+    if (positions) {
+      for (size_t i=0; i<numTimeSteps; i++) alignedUSMFree(positions[i]);
+      alignedUSMFree(positions);
+    }
+    
+    if (normals) {
+      for (size_t i=0; i<numTimeSteps; i++) alignedUSMFree(normals[i]);
+      alignedUSMFree(normals);
+    }
   }
 
   void ISPCPointSet::commit()
@@ -522,6 +673,17 @@ namespace embree
     rtcCommitGeometry(g);
   }
 
+
+  ISPCInstance::ISPCInstance (RTCDevice device, unsigned int numTimeSteps)
+    : geom(INSTANCE), child(nullptr), startTime(0.0f), endTime(1.0f), numTimeSteps(numTimeSteps), quaternion(false), spaces(nullptr)
+  {
+    assert(numTimeSteps);
+    geom.geometry = rtcNewGeometry (device, RTC_GEOMETRY_TYPE_INSTANCE);
+    spaces = (AffineSpace3fa*) alignedUSMMalloc(numTimeSteps*sizeof(AffineSpace3fa),16);
+    for (size_t i=0; i<numTimeSteps; i++)
+      spaces[i] = AffineSpace3fa(one);
+  }
+  
   ISPCInstance::ISPCInstance (RTCDevice device, TutorialScene* scene, Ref<SceneGraph::TransformNode> in)
     : geom(INSTANCE), child(nullptr), startTime(0.0f), endTime(1.0f), numTimeSteps(1), quaternion(false), spaces(nullptr)
   {
@@ -529,13 +691,13 @@ namespace embree
     
     if (g_animation_mode)
     {
-      spaces = (AffineSpace3fa*) alignedMalloc(sizeof(AffineSpace3fa),16);
+      spaces = (AffineSpace3fa*) alignedUSMMalloc(sizeof(AffineSpace3fa),16);
       child = ISPCScene::convertGeometry(device,scene,in->child);
       spaces[0] = in->get(0.0f);
     }
     else
     {
-      spaces = (AffineSpace3fa*) alignedMalloc(in->spaces.size()*sizeof(AffineSpace3fa),16);
+      spaces = (AffineSpace3fa*) alignedUSMMalloc(in->spaces.size()*sizeof(AffineSpace3fa),16);
       child = ISPCScene::convertGeometry(device,scene,in->child);
       startTime  = in->spaces.time_range.lower;
       endTime    = in->spaces.time_range.upper;
@@ -547,7 +709,7 @@ namespace embree
   }
 
   ISPCInstance::~ISPCInstance() {
-    alignedFree(spaces);
+    alignedUSMFree(spaces);
   }
 
   void ISPCInstance::commit()
@@ -591,18 +753,115 @@ namespace embree
     }
   }
 
+  ISPCInstanceArray::ISPCInstanceArray (RTCDevice device, unsigned int numTimeSteps)
+    : geom(INSTANCE_ARRAY), child(nullptr), startTime(0.0f), endTime(1.0f), numTimeSteps(numTimeSteps), numInstances(0), quaternion(false), spaces_array(nullptr)
+  {
+    assert(numTimeSteps);
+    geom.geometry = rtcNewGeometry (device, RTC_GEOMETRY_TYPE_INSTANCE_ARRAY);
+  }
+
+  ISPCInstanceArray::ISPCInstanceArray (RTCDevice device, TutorialScene* scene, Ref<SceneGraph::MultiTransformNode> in)
+    : geom(INSTANCE_ARRAY), child(nullptr), startTime(0.0f), endTime(1.0f), numTimeSteps(1), quaternion(false), spaces_array(nullptr)
+  {
+    if (in->spaces.size() == 0) {
+      THROW_RUNTIME_ERROR("MultiTransformNode invalid. has no transforms.");
+    }
+    numInstances = in->spaces.size();
+
+    geom.geometry = rtcNewGeometry (device, RTC_GEOMETRY_TYPE_INSTANCE_ARRAY);
+
+    if (g_animation_mode)
+    {
+      spaces_array = (AffineSpace3fa**) alignedUSMMalloc(sizeof(AffineSpace3fa*),16);
+      child = ISPCScene::convertGeometry(device,scene,in->child);
+
+      spaces_array[0] = (AffineSpace3fa*) alignedUSMMalloc(numInstances*sizeof(AffineSpace3fa),16);
+      for (size_t i = 0; i < numInstances; ++i) {
+        spaces_array[0][i] = in->get(i, 0.0f);
+      }
+    }
+    else
+    {
+      numTimeSteps = (unsigned)in->spaces[0].size();
+      if (numTimeSteps == 0) {
+        THROW_RUNTIME_ERROR("MultiTransformNode invalid. numTimeSteps can not be 0.");
+      }
+      child = ISPCScene::convertGeometry(device,scene,in->child);
+      startTime  = in->spaces[0].time_range.lower;
+      endTime    = in->spaces[0].time_range.upper;
+      quaternion = in->spaces[0].quaternion;
+      spaces_array = (AffineSpace3fa**) alignedUSMMalloc(numTimeSteps*sizeof(AffineSpace3fa*),16);
+      for (size_t i=0; i<numTimeSteps; i++) {
+        spaces_array[i] = (AffineSpace3fa*) alignedUSMMalloc(numInstances*sizeof(AffineSpace3fa),16);
+        for (size_t j = 0; j < numInstances; ++j)
+          spaces_array[i][j] = in->spaces[j][i];
+      }
+    }
+  }
+
+  ISPCInstanceArray::~ISPCInstanceArray() {
+    for (size_t i = 0; i < numTimeSteps; ++i)
+      alignedUSMFree(spaces_array[i]);
+    alignedUSMFree(spaces_array);
+  }
+
+  void ISPCInstanceArray::commit()
+  {
+    if (child->type != GROUP)
+      THROW_RUNTIME_ERROR("invalid scene structure");
+
+    ISPCGroup* group = (ISPCGroup*) child;
+    RTCScene scene_inst = group->scene;
+
+    if (numTimeSteps == 1 || g_animation_mode)
+    {
+      RTCGeometry g = geom.geometry;
+      rtcSetGeometryInstancedScene(g,scene_inst);
+      rtcSetGeometryTimeStepCount(g,1);
+      if (quaternion) {
+        rtcSetSharedGeometryBuffer(g, RTC_BUFFER_TYPE_TRANSFORM, 0, RTC_FORMAT_QUATERNION_DECOMPOSITION, (void*)&spaces_array[0][0].l.vx.x, 0, sizeof(AffineSpace3fa), numInstances);
+      } else {
+        rtcSetSharedGeometryBuffer(g, RTC_BUFFER_TYPE_TRANSFORM, 0, RTC_FORMAT_FLOAT4X4_COLUMN_MAJOR, (void*)&spaces_array[0][0].l.vx.x, 0, sizeof(AffineSpace3fa), numInstances);
+      }
+      rtcSetGeometryUserData(g, this);
+      rtcCommitGeometry(g);
+    }
+    else
+    {
+      RTCGeometry g = geom.geometry;
+      rtcSetGeometryInstancedScene(g,scene_inst);
+      rtcSetGeometryTimeStepCount(g,numTimeSteps);
+      rtcSetGeometryTimeRange(g,startTime,endTime);
+      for (unsigned t=0; t<numTimeSteps; t++) {
+        if (quaternion) {
+          rtcSetSharedGeometryBuffer(g, RTC_BUFFER_TYPE_TRANSFORM, t, RTC_FORMAT_QUATERNION_DECOMPOSITION, (void*)&spaces_array[t][0].l.vx.x, 0, sizeof(AffineSpace3fa), numInstances);
+        } else {
+          rtcSetSharedGeometryBuffer(g, RTC_BUFFER_TYPE_TRANSFORM, t, RTC_FORMAT_FLOAT4X4_COLUMN_MAJOR, (void*)&spaces_array[t][0].l.vx.x, 0, sizeof(AffineSpace3fa), numInstances);
+        }
+      }
+      rtcSetGeometryUserData(g, this);
+      rtcCommitGeometry(g);
+    }
+  }
+
+  ISPCGroup::ISPCGroup( RTCDevice device, unsigned int numGeometries )
+    : geom(GROUP), scene(rtcNewScene(device)), geometries(nullptr), numGeometries(numGeometries), requiredInstancingDepth(0)
+  {
+    geometries = (ISPCGeometry**) alignedUSMMalloc(sizeof(ISPCGeometry*)*numGeometries);
+  }
+  
   ISPCGroup::ISPCGroup (RTCDevice device, TutorialScene* scene, Ref<SceneGraph::GroupNode> in)
     : geom(GROUP), scene(rtcNewScene(device)), requiredInstancingDepth(0)
   {
     numGeometries = (unsigned int) in->size();
-    geometries = new ISPCGeometry*[numGeometries];
+    geometries = (ISPCGeometry**) alignedUSMMalloc(sizeof(ISPCGeometry*)*numGeometries);
     for (size_t i=0; i<numGeometries; i++)
       geometries[i] = ISPCScene::convertGeometry(device,scene,in->child(i));
   }
 
   ISPCGroup::~ISPCGroup()
   {
-    delete[] geometries;
+    alignedUSMFree(geometries);
     rtcReleaseScene(scene);
   }
 
@@ -633,6 +892,9 @@ namespace embree
       geom = (ISPCGeometry*) new ISPCGridMesh(device,scene,mesh); 
     else if (Ref<SceneGraph::TransformNode> mesh = in.dynamicCast<SceneGraph::TransformNode>())
       geom = (ISPCGeometry*) new ISPCInstance(device,scene,mesh);
+    else if (Ref<SceneGraph::MultiTransformNode> mesh = in.dynamicCast<SceneGraph::MultiTransformNode>()) {
+      geom = (ISPCGeometry*) new ISPCInstanceArray(device,scene,mesh);
+    }
     else if (Ref<SceneGraph::GroupNode> mesh = in.dynamicCast<SceneGraph::GroupNode>())
       geom = (ISPCGeometry*) new ISPCGroup(device,scene,mesh);
     else if (Ref<SceneGraph::PointSetNode> mesh = in.dynamicCast<SceneGraph::PointSetNode>())
@@ -644,61 +906,108 @@ namespace embree
     return geom;
   }
 
-  void ConvertTriangleMesh(RTCDevice device, ISPCTriangleMesh* mesh, RTCBuildQuality quality, RTCSceneFlags flags)
+  void ConvertTriangleMesh(RTCDevice device, ISPCTriangleMesh* mesh, RTCBuildQuality quality, RTCSceneFlags flags, RTCFeatureFlags& used_features)
   {
     if (mesh->geom.visited) return;
+    
+    used_features |= RTC_FEATURE_FLAG_TRIANGLE;
+    if (mesh->numTimeSteps > 1) used_features |= RTC_FEATURE_FLAG_MOTION_BLUR;
+    
     mesh->geom.visited = true;
     rtcSetGeometryBuildQuality(mesh->geom.geometry, quality);
     mesh->commit();
   }
   
-  void ConvertQuadMesh(RTCDevice device, ISPCQuadMesh* mesh, RTCBuildQuality quality, RTCSceneFlags flags)
+  void ConvertQuadMesh(RTCDevice device, ISPCQuadMesh* mesh, RTCBuildQuality quality, RTCSceneFlags flags, RTCFeatureFlags& used_features)
   {
     if (mesh->geom.visited) return;
+    
+    used_features |= RTC_FEATURE_FLAG_QUAD;
+    if (mesh->numTimeSteps > 1) used_features |= RTC_FEATURE_FLAG_MOTION_BLUR;
+    
     mesh->geom.visited = true;
     rtcSetGeometryBuildQuality(mesh->geom.geometry, quality);
     mesh->commit();
   }
 
-  void ConvertGridMesh(RTCDevice device, ISPCGridMesh* mesh, RTCBuildQuality quality, RTCSceneFlags flags)
+  void ConvertGridMesh(RTCDevice device, ISPCGridMesh* mesh, RTCBuildQuality quality, RTCSceneFlags flags, RTCFeatureFlags& used_features)
   {
     if (mesh->geom.visited) return;
+    
+    used_features |= RTC_FEATURE_FLAG_GRID;
+    if (mesh->numTimeSteps > 1) used_features |= RTC_FEATURE_FLAG_MOTION_BLUR;
+    
     mesh->geom.visited = true;
     rtcSetGeometryBuildQuality(mesh->geom.geometry, quality);
     mesh->commit();
   }
   
-  void ConvertSubdivMesh(RTCDevice device, ISPCSubdivMesh* mesh, RTCBuildQuality quality, RTCSceneFlags flags)
+  void ConvertSubdivMesh(RTCDevice device, ISPCSubdivMesh* mesh, RTCBuildQuality quality, RTCSceneFlags flags, RTCFeatureFlags& used_features)
   {
     if (mesh->geom.visited) return;
+    
+    used_features |= RTC_FEATURE_FLAG_SUBDIVISION;
+    if (mesh->numTimeSteps > 1) used_features |= RTC_FEATURE_FLAG_MOTION_BLUR;
+    
     mesh->geom.visited = true;
     rtcSetGeometryBuildQuality(mesh->geom.geometry, quality);
     mesh->commit();
   }
   
-  void ConvertCurveGeometry(RTCDevice device, ISPCHairSet* mesh, RTCBuildQuality quality, RTCSceneFlags flags)
+  void ConvertCurveGeometry(RTCDevice device, ISPCHairSet* mesh, RTCBuildQuality quality, RTCSceneFlags flags, RTCFeatureFlags& used_features)
   {
     if (mesh->geom.visited) return;
+    
+    switch (mesh->type) {
+    case RTC_GEOMETRY_TYPE_CONE_LINEAR_CURVE:                 used_features |= RTC_FEATURE_FLAG_CONE_LINEAR_CURVE; break;
+    case RTC_GEOMETRY_TYPE_ROUND_LINEAR_CURVE:                used_features |= RTC_FEATURE_FLAG_ROUND_LINEAR_CURVE ; break;
+    case RTC_GEOMETRY_TYPE_FLAT_LINEAR_CURVE:                 used_features |= RTC_FEATURE_FLAG_FLAT_LINEAR_CURVE; break;
+    case RTC_GEOMETRY_TYPE_ROUND_BEZIER_CURVE:                used_features |= RTC_FEATURE_FLAG_ROUND_BEZIER_CURVE; break;
+    case RTC_GEOMETRY_TYPE_FLAT_BEZIER_CURVE:                 used_features |= RTC_FEATURE_FLAG_FLAT_BEZIER_CURVE; break;
+    case RTC_GEOMETRY_TYPE_NORMAL_ORIENTED_BEZIER_CURVE:      used_features |= RTC_FEATURE_FLAG_NORMAL_ORIENTED_BEZIER_CURVE; break;
+    case RTC_GEOMETRY_TYPE_ROUND_BSPLINE_CURVE:               used_features |= RTC_FEATURE_FLAG_ROUND_BSPLINE_CURVE; break;
+    case RTC_GEOMETRY_TYPE_FLAT_BSPLINE_CURVE:                used_features |= RTC_FEATURE_FLAG_FLAT_BSPLINE_CURVE; break;
+    case RTC_GEOMETRY_TYPE_NORMAL_ORIENTED_BSPLINE_CURVE:     used_features |= RTC_FEATURE_FLAG_NORMAL_ORIENTED_BSPLINE_CURVE; break;
+    case RTC_GEOMETRY_TYPE_ROUND_HERMITE_CURVE:               used_features |= RTC_FEATURE_FLAG_ROUND_HERMITE_CURVE; break;
+    case RTC_GEOMETRY_TYPE_FLAT_HERMITE_CURVE:                used_features |= RTC_FEATURE_FLAG_FLAT_HERMITE_CURVE; break;
+    case RTC_GEOMETRY_TYPE_NORMAL_ORIENTED_HERMITE_CURVE:     used_features |= RTC_FEATURE_FLAG_NORMAL_ORIENTED_HERMITE_CURVE; break;
+    case RTC_GEOMETRY_TYPE_ROUND_CATMULL_ROM_CURVE:           used_features |= RTC_FEATURE_FLAG_ROUND_CATMULL_ROM_CURVE; break;
+    case RTC_GEOMETRY_TYPE_FLAT_CATMULL_ROM_CURVE:            used_features |= RTC_FEATURE_FLAG_FLAT_CATMULL_ROM_CURVE; break;
+    case RTC_GEOMETRY_TYPE_NORMAL_ORIENTED_CATMULL_ROM_CURVE: used_features |= RTC_FEATURE_FLAG_NORMAL_ORIENTED_CATMULL_ROM_CURVE; break;
+    default: assert(false); break;
+    }
+    if (mesh->numTimeSteps > 1) used_features |= RTC_FEATURE_FLAG_MOTION_BLUR;
+    
     mesh->geom.visited = true;
     rtcSetGeometryBuildQuality(mesh->geom.geometry, quality);
     mesh->commit();
   }
 
-  void ConvertPoints(RTCDevice device, ISPCPointSet* mesh, RTCBuildQuality quality, RTCSceneFlags flags)
+  void ConvertPoints(RTCDevice device, ISPCPointSet* mesh, RTCBuildQuality quality, RTCSceneFlags flags, RTCFeatureFlags& used_features)
   {
     if (mesh->geom.visited) return;
+
+    switch (mesh->type) {
+    case RTC_GEOMETRY_TYPE_SPHERE_POINT:        used_features |= RTC_FEATURE_FLAG_SPHERE_POINT; break;
+    case RTC_GEOMETRY_TYPE_DISC_POINT:          used_features |= RTC_FEATURE_FLAG_DISC_POINT; break;
+    case RTC_GEOMETRY_TYPE_ORIENTED_DISC_POINT: used_features |= RTC_FEATURE_FLAG_ORIENTED_DISC_POINT; break;
+    default: assert(false); break;
+    }
+    if (mesh->numTimeSteps > 1) used_features |= RTC_FEATURE_FLAG_MOTION_BLUR;
+    
     mesh->geom.visited = true;
     rtcSetGeometryBuildQuality(mesh->geom.geometry, quality);
     mesh->commit();
   }
 
-  unsigned int ConvertInstance(RTCDevice device, ISPCInstance* instance, RTCBuildQuality quality, RTCSceneFlags flags, unsigned int depth);
+  unsigned int ConvertInstance(RTCDevice device, ISPCInstance* instance, RTCBuildQuality quality, RTCSceneFlags flags, unsigned int depth, RTCFeatureFlags& used_features);
+  unsigned int ConvertInstanceArray(RTCDevice device, ISPCInstanceArray* instance, RTCBuildQuality quality, RTCSceneFlags flags, unsigned int depth, RTCFeatureFlags& used_features);
 
-  unsigned int ConvertGroup(RTCDevice device, ISPCGroup* group, RTCBuildQuality quality, RTCSceneFlags flags, unsigned int depth)
+  unsigned int ConvertGroup(RTCDevice device, ISPCGroup* group, RTCBuildQuality quality, RTCSceneFlags flags, unsigned int depth, RTCFeatureFlags& used_features)
   {
     if (group->geom.visited) return group->requiredInstancingDepth;
     group->geom.visited = true;
-    
+
     RTCScene scene = group->scene;
     rtcSetSceneFlags(scene, flags);
 
@@ -707,19 +1016,23 @@ namespace embree
     {
       ISPCGeometry* geometry = group->geometries[geomID];
       if (geometry->type == SUBDIV_MESH)
-        ConvertSubdivMesh(device,(ISPCSubdivMesh*) geometry, quality, flags);
+        ConvertSubdivMesh(device,(ISPCSubdivMesh*) geometry, quality, flags, used_features);
       else if (geometry->type == TRIANGLE_MESH)
-        ConvertTriangleMesh(device,(ISPCTriangleMesh*) geometry, quality, flags);
+        ConvertTriangleMesh(device,(ISPCTriangleMesh*) geometry, quality, flags, used_features);
       else if (geometry->type == QUAD_MESH)
-        ConvertQuadMesh(device,(ISPCQuadMesh*) geometry, quality, flags);
+        ConvertQuadMesh(device,(ISPCQuadMesh*) geometry, quality, flags, used_features);
       else if (geometry->type == CURVES)
-        ConvertCurveGeometry(device,(ISPCHairSet*) geometry, quality, flags);
+        ConvertCurveGeometry(device,(ISPCHairSet*) geometry, quality, flags, used_features);
       else if (geometry->type == GRID_MESH)
-        ConvertGridMesh(device,(ISPCGridMesh*) geometry, quality, flags);
+        ConvertGridMesh(device,(ISPCGridMesh*) geometry, quality, flags, used_features);
       else if (geometry->type == POINTS)
-        ConvertPoints(device,(ISPCPointSet*) geometry, quality, flags);
+        ConvertPoints(device,(ISPCPointSet*) geometry, quality, flags, used_features);
       else if (geometry->type == INSTANCE) {
-        unsigned int reqDepth = ConvertInstance(device,(ISPCInstance*) geometry, quality, flags, depth);
+        unsigned int reqDepth = ConvertInstance(device,(ISPCInstance*) geometry, quality, flags, depth, used_features);
+        requiredInstancingDepth = max(requiredInstancingDepth, reqDepth);
+      }
+      else if (geometry->type == INSTANCE_ARRAY) {
+        unsigned int reqDepth = ConvertInstanceArray(device,(ISPCInstanceArray*) geometry, quality, flags, depth, used_features);
         requiredInstancingDepth = max(requiredInstancingDepth, reqDepth);
       }
       else
@@ -732,13 +1045,16 @@ namespace embree
     return requiredInstancingDepth;
   }
 
-  unsigned int ConvertInstance(RTCDevice device, ISPCInstance* instance, RTCBuildQuality quality, RTCSceneFlags flags, unsigned int depth)
+  unsigned int ConvertInstance(RTCDevice device, ISPCInstance* instance, RTCBuildQuality quality, RTCSceneFlags flags, unsigned int depth, RTCFeatureFlags& used_features)
   {
+    used_features |= RTC_FEATURE_FLAG_INSTANCE;
+    if (instance->numTimeSteps > 1) used_features |= RTC_FEATURE_FLAG_MOTION_BLUR;
+    
     if (instance->child->type != GROUP)
       THROW_RUNTIME_ERROR("invalid scene structure");
 
     ISPCGroup* group = (ISPCGroup*) instance->child;
-    unsigned int requiredInstancingDepth = 1+ConvertGroup(device, group, quality, flags, depth+1);
+    unsigned int requiredInstancingDepth = 1+ConvertGroup(device, group, quality, flags, depth+1, used_features);
 
     if (depth + requiredInstancingDepth > RTC_MAX_INSTANCE_LEVEL_COUNT)
       THROW_RUNTIME_ERROR("scene instancing depth is too large");
@@ -746,12 +1062,38 @@ namespace embree
     if (instance->geom.visited) return requiredInstancingDepth;
     instance->geom.visited = true;
     instance->commit();
-    
+
     return requiredInstancingDepth;
   }
 
-  extern "C" RTCScene ConvertScene(RTCDevice g_device, ISPCScene* scene_in, RTCBuildQuality quality, RTCSceneFlags flags)
+  unsigned int ConvertInstanceArray(RTCDevice device, ISPCInstanceArray* instance, RTCBuildQuality quality, RTCSceneFlags flags, unsigned int depth, RTCFeatureFlags& used_features)
   {
+    used_features |= RTC_FEATURE_FLAG_INSTANCE_ARRAY;
+    if (instance->numTimeSteps > 1) used_features |= RTC_FEATURE_FLAG_MOTION_BLUR;
+
+    if (instance->child->type != GROUP)
+      THROW_RUNTIME_ERROR("invalid scene structure");
+
+    ISPCGroup* group = (ISPCGroup*) instance->child;
+    unsigned int requiredInstancingDepth = 1+ConvertGroup(device, group, quality, flags, depth+1, used_features);
+
+    if (depth + requiredInstancingDepth > RTC_MAX_INSTANCE_LEVEL_COUNT)
+      THROW_RUNTIME_ERROR("scene instancing depth is too large");
+
+    if (instance->geom.visited) return requiredInstancingDepth;
+    instance->geom.visited = true;
+    instance->commit();
+
+    return requiredInstancingDepth;
+  }
+
+  extern "C" RTCScene ConvertScene(RTCDevice g_device, ISPCScene* scene_in, RTCBuildQuality quality, RTCSceneFlags flags, RTCFeatureFlags *used_features_out)
+  {
+    TutorialScene* tutorial_scene = (TutorialScene*) scene_in->tutorialScene;
+    if (!tutorial_scene) return scene_in->scene;
+    
+    RTCFeatureFlags used_features = RTC_FEATURE_FLAG_NONE;
+
     RTCScene scene = scene_in->scene;
     rtcSetSceneFlags(scene, flags);
     
@@ -759,26 +1101,35 @@ namespace embree
     {
       ISPCGeometry* geometry = scene_in->geometries[geomID];
       if (geometry->type == SUBDIV_MESH)
-        ConvertSubdivMesh(g_device,(ISPCSubdivMesh*) geometry, quality, flags);
+        ConvertSubdivMesh(g_device,(ISPCSubdivMesh*) geometry, quality, flags, used_features);
       else if (geometry->type == TRIANGLE_MESH)
-        ConvertTriangleMesh(g_device,(ISPCTriangleMesh*) geometry, quality, flags);
+        ConvertTriangleMesh(g_device,(ISPCTriangleMesh*) geometry, quality, flags, used_features);
       else if (geometry->type == QUAD_MESH)
-        ConvertQuadMesh(g_device,(ISPCQuadMesh*) geometry, quality, flags);
+        ConvertQuadMesh(g_device,(ISPCQuadMesh*) geometry, quality, flags, used_features);
       else if (geometry->type == CURVES)
-        ConvertCurveGeometry(g_device,(ISPCHairSet*) geometry, quality, flags);
+        ConvertCurveGeometry(g_device,(ISPCHairSet*) geometry, quality, flags, used_features);
       else if (geometry->type == GRID_MESH)
-        ConvertGridMesh(g_device,(ISPCGridMesh*) geometry, quality, flags);
+        ConvertGridMesh(g_device,(ISPCGridMesh*) geometry, quality, flags, used_features);
       else if (geometry->type == POINTS)
-        ConvertPoints(g_device,(ISPCPointSet*) geometry, quality, flags);
+        ConvertPoints(g_device,(ISPCPointSet*) geometry, quality, flags, used_features);
       else if (geometry->type == INSTANCE)
-        ConvertInstance(g_device, (ISPCInstance*) geometry, quality, flags, 0);
+        ConvertInstance(g_device, (ISPCInstance*) geometry, quality, flags, 0, used_features);
+      else if (geometry->type == INSTANCE_ARRAY)
+        ConvertInstanceArray(g_device, (ISPCInstanceArray*) geometry, quality, flags, 0, used_features);
       else
         assert(false);
 
       rtcAttachGeometryByID(scene,geometry->geometry,geomID);
     }
 
-    Application::instance->log(1,"creating Embree objects done");
+    if (Application::instance) {
+      Application::instance->log(1,"scene features = " + to_string(used_features));
+      Application::instance->log(1,"creating Embree objects done");
+    }
+    
+    if (used_features_out)
+      *used_features_out = used_features;
+
     return scene;
   }
 
@@ -791,13 +1142,23 @@ namespace embree
     for (unsigned int geomID=0; geomID<scene_in->numGeometries; geomID++)
     {
       ISPCGeometry* geometry = scene_in->geometries[geomID];
-      if (geometry->type != INSTANCE) continue;
-      ISPCInstance* inst = (ISPCInstance*) geometry;
 
-      Ref<SceneGraph::TransformNode> node = tutorial_scene->geometries[geomID].dynamicCast<SceneGraph::TransformNode>();
-      assert(node);
-      inst->spaces[0] = node->get(time);
-      inst->commit();
+      if (geometry->type == INSTANCE) {
+        ISPCInstance* inst = (ISPCInstance*) geometry;
+        Ref<SceneGraph::TransformNode> node = tutorial_scene->geometries[geomID].dynamicCast<SceneGraph::TransformNode>();
+        assert(node);
+        inst->spaces[0] = node->get(time);
+        inst->commit();
+      }
+      else if (geometry->type == INSTANCE_ARRAY) {
+        ISPCInstanceArray* inst = (ISPCInstanceArray*) geometry;
+        Ref<SceneGraph::MultiTransformNode> node = tutorial_scene->geometries[geomID].dynamicCast<SceneGraph::MultiTransformNode>();
+        assert(node);
+        for (size_t i = 0; i < inst->numInstances; ++i) {
+          inst->spaces_array[0][i] = node->get(i, time);
+        }
+        inst->commit();
+      }
     }
 
     rtcCommitScene(scene_in->scene);

@@ -1,4 +1,4 @@
-% rtcDisableGeometry(3) | Embree Ray Tracing Kernels 3
+% rtcDisableGeometry(3) | Embree Ray Tracing Kernels 4
 
 #### NAME
 
@@ -6,7 +6,7 @@
 
 #### SYNOPSIS
 
-    #include <embree3/rtcore.h>
+    #include <embree4/rtcore.h>
 
     void rtcDisableGeometry(RTCGeometry geometry);
 

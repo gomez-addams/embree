@@ -1,4 +1,4 @@
-% rtcSetGeometryIntersectFilterFunction(3) | Embree Ray Tracing Kernels 3
+% rtcSetGeometryIntersectFilterFunction(3) | Embree Ray Tracing Kernels 4
 
 #### NAME
 
@@ -7,13 +7,13 @@
 
 #### SYNOPSIS
 
-    #include <embree3/rtcore.h>
+    #include <embree4/rtcore.h>
 
     struct RTCFilterFunctionNArguments
     {
       int* valid;
       void* geometryUserPtr;
-      const struct RTCIntersectContext* context;
+      const struct RTCRayQueryContext* context;
       struct RTCRayN* ray;
       struct RTCHitN* hit;
       unsigned int N;
@@ -59,7 +59,7 @@ structure. The `valid` parameter of that structure points to an
 integer valid mask (0 means invalid and -1 means valid). The
 `geometryUserPtr` member is a user pointer optionally set per geometry
 through the `rtcSetGeometryUserData` function. The `context` member
-points to the intersection context passed to the ray query
+points to the ray query context passed to the ray query
 function. The `ray` parameter points to `N` rays in SOA layout. The
 `hit` parameter points to `N` hits in SOA layout to test. The `N`
 parameter is the number of rays and hits in `ray` and `hit`. The hit
@@ -70,11 +70,11 @@ ray and the potential hit are in object space.
 The filter callback function has the task to check for each valid ray
 whether it wants to accept or reject the corresponding hit. To reject
 a hit, the filter callback function just has to write `0` to the
-integer valid mask of the corresponding ray. To accept the hit, it just
-has to leave the valid mask set to `-1`. The filter function is further
-allowed to change the hit and decrease the `tfar` value of the ray but
-it should not modify other ray data nor any inactive components of the
-ray or hit.
+integer valid mask of the corresponding ray. To accept the hit, it
+just has to leave the valid mask set to `-1`. When accepting a hit,
+the filter function is further allowed to change the hit and decrease
+the `tfar` value of the ray but it should not modify other ray data
+nor any inactive components of the ray or hit.
 
 ``` {include=src/api/inc/reorder_callback_intersect.md}
 ```

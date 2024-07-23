@@ -3,9 +3,9 @@
 
 #include "light.isph"
 
-Light_EvalRes Light_eval(const uniform Light* uniform,
-                         const DifferentialGeometry&,
-                         const Vec3f&)
+SYCL_EXTERNAL Light_EvalRes Light_eval(const uniform Light* uniform,
+                                                      const DifferentialGeometry&,
+                                                      const Vec3f&)
 {
   Light_EvalRes res;
   res.value = make_Vec3f(0.f);

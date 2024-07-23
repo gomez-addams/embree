@@ -9,9 +9,9 @@
 #include "../../../common/sys/sysinfo.h"
 #include "../../../common/sys/atomic.h"
 #include "../../../common/sys/vector.h"
-#include "../../../common/sys/string.h"
+#include "../../../common/sys/estring.h"
 
-#include "../../../common/math/math.h"
+#include "../../../common/math/emath.h"
 #include "../../../common/math/vec2.h"
 #include "../../../common/math/vec3.h"
 #include "../../../common/math/vec4.h"
@@ -30,15 +30,18 @@
      *  has to be smaller than far. */
     __forceinline Ray(const embree::Vec3fa& org, 
                       const embree::Vec3fa& dir, 
-                      float tnear = embree::zero, 
+                      float tnear = 0.0f,
                       float tfar = embree::inf, 
-                      float time = embree::zero, 
+                      float time = 0.0f, 
                       int mask = -1,
                       unsigned int geomID = RTC_INVALID_GEOMETRY_ID, 
                       unsigned int primID = RTC_INVALID_GEOMETRY_ID)
       : org(org,tnear), dir(dir,time), tfar(tfar), mask(mask), primID(primID), geomID(geomID)
     {
       instID[0] = RTC_INVALID_GEOMETRY_ID;
+#if defined(RTC_GEOMETRY_INSTANCE_ARRAY)
+      instPrimID[0] = RTC_INVALID_GEOMETRY_ID;
+#endif
     }
 
     /*! Tests if we hit something. */
@@ -61,6 +64,9 @@
     unsigned int primID;           //!< primitive ID
     unsigned int geomID;           //!< geometry ID
     unsigned int instID[RTC_MAX_INSTANCE_LEVEL_COUNT];           //!< instance ID
+#if defined(RTC_GEOMETRY_INSTANCE_ARRAY)
+    unsigned int instPrimID[RTC_MAX_INSTANCE_LEVEL_COUNT];           //!< instance primitive ID
+#endif
 
     __forceinline float &tnear() { return org.w; };
     __forceinline float &time()  { return dir.w; };
@@ -73,9 +79,9 @@
 __forceinline void init_Ray(Ray &ray,
                             const embree::Vec3fa& org, 
                             const embree::Vec3fa& dir, 
-                            float tnear = embree::zero, 
+                            float tnear = 0.0f, 
                             float tfar = embree::inf, 
-                            float time = embree::zero, 
+                            float time = 0.0f, 
                             int mask = -1,
                             unsigned int geomID = RTC_INVALID_GEOMETRY_ID, 
                             unsigned int primID = RTC_INVALID_GEOMETRY_ID)
@@ -108,22 +114,31 @@ __forceinline RTCRay* RTCRay1_(Ray& ray) {
 }
 
   /*! Outputs ray to stream. */ 
-  __forceinline embree_ostream operator<<(embree_ostream cout, const Ray& ray) {
-    return cout << "{ " << 
-      "org = " << ray.org << ", dir = " << ray.dir << ", near = " << ray.tnear() << ", far = " << ray.tfar << ", time = " << ray.time() << ", " <<
-      //"instID = " << ray.instID 
-      "geomID = " << ray.geomID << ", primID = " << ray.primID <<  ", " << "u = " << ray.u <<  ", v = " << ray.v << ", Ng = " << ray.Ng << " }";
+  __forceinline embree_ostream operator<<(embree_ostream cout, const Ray& ray)
+  {
+    cout << "{ " << 
+      "org = " << ray.org << ", dir = " << ray.dir << ", near = " << ray.tnear() << ", far = " << ray.tfar << ", time = " << ray.time() << ", ";
+    
+    for (size_t i=0; i<RTC_MAX_INSTANCE_LEVEL_COUNT; i++)
+      cout << "instID" << i << " = " << ray.instID[i] << ", ";
+#if defined(RTC_GEOMETRY_INSTANCE_ARRAY)
+    for (size_t i=0; i<RTC_MAX_INSTANCE_LEVEL_COUNT; i++)
+      cout << "instPrimID" << i << " = " << ray.instPrimID[i] << ", ";
+#endif
+        
+    return cout << "geomID = " << ray.geomID << ", primID = " << ray.primID <<  ", " << "u = " << ray.u <<  ", v = " << ray.v << ", Ng = " << ray.Ng << " }";
   }
 
-/*! intersection context passed to intersect/occluded calls */
-struct IntersectContext
+/*! ray query context passed to intersect/occluded calls */
+struct RayQueryContext
 {
-  RTCIntersectContext context;
+  RTCRayQueryContext context;
   void* userRayExt;               //!< can be used to pass extended ray data to callbacks
+  void* tutorialData;
 };
 
-__forceinline void InitIntersectionContext(struct IntersectContext* context)
+__forceinline void InitIntersectionContext(struct RayQueryContext* context)
 {
-  rtcInitIntersectContext(&context->context);
+  rtcInitRayQueryContext(&context->context);
   context->userRayExt = NULL;
 }

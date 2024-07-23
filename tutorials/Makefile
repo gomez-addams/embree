@@ -1,7 +1,7 @@
 ## Copyright 2009-2021 Intel Corporation
 ## SPDX-License-Identifier: Apache-2.0
 
-ispc2cpp: common triangle_geometry point_geometry dynamic_scene user_geometry viewer viewer_stream viewer_anim instanced_geometry intersection_filter pathtracer hair_geometry subdivision_geometry displacement_geometry lazy_geometry motion_blur_geometry interpolation_geometry curve_geometry grid_geometry quaternion_motion_blur
+ispc2cpp: common triangle_geometry point_geometry dynamic_scene user_geometry viewer instanced_geometry intersection_filter pathtracer hair_geometry subdivision_geometry displacement_geometry lazy_geometry motion_blur_geometry interpolation_geometry curve_geometry grid_geometry quaternion_motion_blur
 
 common: FORCE
 	@./ispc2cpp.sh common/tutorial/tutorial_device.isph common/tutorial/tutorial_device.h
@@ -28,6 +28,7 @@ point_geometry: FORCE
 	@./ispc2cpp.sh point_geometry/point_geometry_device.isph point_geometry/point_geometry_device.h
 	@./ispc2cpp.sh point_geometry/point_geometry_device.ispc point_geometry/point_geometry_device.cpp
 dynamic_scene: FORCE
+	@./ispc2cpp.sh dynamic_scene/dynamic_scene_device.isph dynamic_scene/dynamic_scene_device.h
 	@./ispc2cpp.sh dynamic_scene/dynamic_scene_device.ispc dynamic_scene/dynamic_scene_device.cpp
 user_geometry: FORCE
 	@./ispc2cpp.sh user_geometry/user_geometry_device.isph user_geometry/user_geometry_device.h
@@ -35,19 +36,20 @@ user_geometry: FORCE
 viewer: FORCE
 	@./ispc2cpp.sh viewer/viewer_device.isph viewer/viewer_device.h
 	@./ispc2cpp.sh viewer/viewer_device.ispc viewer/viewer_device.cpp
-viewer_stream: FORCE
-	@./ispc2cpp.sh viewer_stream/viewer_stream_device.ispc viewer_stream/viewer_stream_device.cpp
-viewer_anim: FORCE
-	@./ispc2cpp.sh viewer_anim/viewer_anim_device.ispc viewer_anim/viewer_anim_device.cpp
 instanced_geometry: FORCE
 	@./ispc2cpp.sh instanced_geometry/instanced_geometry_device.isph instanced_geometry/instanced_geometry_device.h
 	@./ispc2cpp.sh instanced_geometry/instanced_geometry_device.ispc instanced_geometry/instanced_geometry_device.cpp
+multi_instanced_geometry: FORCE
+	@./ispc2cpp.sh multi_instanced_geometry/multi_instanced_geometry_device.isph multi_instanced_geometry/multi_instanced_geometry_device.h
+	@./ispc2cpp.sh multi_instanced_geometry/multi_instanced_geometry_device.ispc multi_instanced_geometry/multi_instanced_geometry_device.cpp
 intersection_filter: FORCE
 	@./ispc2cpp.sh intersection_filter/intersection_filter_device.isph intersection_filter/intersection_filter_device.h
 	@./ispc2cpp.sh intersection_filter/intersection_filter_device.ispc intersection_filter/intersection_filter_device.cpp
 pathtracer: FORCE
+	@./ispc2cpp.sh pathtracer/pathtracer_device.isph pathtracer/pathtracer_device.h
 	@./ispc2cpp.sh pathtracer/pathtracer_device.ispc pathtracer/pathtracer_device.cpp
 hair_geometry: FORCE
+	@./ispc2cpp.sh hair_geometry/hair_geometry_device.isph hair_geometry/hair_geometry_device.h
 	@./ispc2cpp.sh hair_geometry/hair_geometry_device.ispc hair_geometry/hair_geometry_device.cpp
 subdivision_geometry: FORCE
 	@./ispc2cpp.sh subdivision_geometry/subdivision_geometry_device.ispc subdivision_geometry/subdivision_geometry_device.cpp
@@ -62,10 +64,13 @@ interpolation_geometry: FORCE
 	@./ispc2cpp.sh interpolation/interpolation_device.isph interpolation/interpolation_device.h
 	@./ispc2cpp.sh interpolation/interpolation_device.ispc interpolation/interpolation_device.cpp
 curve_geometry: FORCE
+	@./ispc2cpp.sh curve_geometry/curve_geometry_device.isph curve_geometry/curve_geometry_device.h
 	@./ispc2cpp.sh curve_geometry/curve_geometry_device.ispc curve_geometry/curve_geometry_device.cpp
 grid_geometry: FORCE
+	@./ispc2cpp.sh grid_geometry/grid_geometry_device.isph grid_geometry/grid_geometry_device.h
 	@./ispc2cpp.sh grid_geometry/grid_geometry_device.ispc grid_geometry/grid_geometry_device.cpp
 quaternion_motion_blur: FORCE
+	@./ispc2cpp.sh quaternion_motion_blur/quaternion_motion_blur_device.isph quaternion_motion_blur/quaternion_motion_blur_device.h
 	@./ispc2cpp.sh quaternion_motion_blur/quaternion_motion_blur_device.ispc quaternion_motion_blur/quaternion_motion_blur_device.cpp
 
 osp2emb:

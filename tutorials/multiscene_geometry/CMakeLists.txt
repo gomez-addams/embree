@@ -5,7 +5,8 @@ SET(EMBREE_ISPC_SUPPORT OFF)
 
 INCLUDE(tutorial)
 ADD_TUTORIAL(multiscene_geometry)
+#ADD_TUTORIAL_ISPC(multiscene_geometry)
+ADD_TUTORIAL_SYCL(multiscene_geometry)
 
-IF (BUILD_TESTING AND EMBREE_TESTING_INTENSITY GREATER 0)
-  ADD_EMBREE_TEST(multiscene_geometry)
-ENDIF()
+
+ADD_EMBREE_TEST_ECS(multiscene_geometry embree_multiscene_geometry ARGS --compare-threshold 40)  # because of AVX512 in fedora32

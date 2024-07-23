@@ -1,4 +1,4 @@
-% rtcGetDeviceProperty(3) | Embree Ray Tracing Kernels 3
+% rtcGetDeviceProperty(3) | Embree Ray Tracing Kernels 4
 
 #### NAME
 
@@ -6,7 +6,7 @@
 
 #### SYNOPSIS
 
-    #include <embree3/rtcore.h>
+    #include <embree4/rtcore.h>
 
     ssize_t rtcGetDeviceProperty(
       RTCDevice device,
@@ -55,12 +55,6 @@ Possible properties to query are:
     `AVX512` enabled, and if the machine it is
     running on supports `AVX512`.
 
-+   `RTC_DEVICE_PROPERTY_RAY_STREAM_SUPPORTED`: Queries whether
-    `rtcIntersect1M`, `rtcIntersect1Mp`, `rtcIntersectNM`,
-    `rtcIntersectNp`, `rtcOccluded1M`, `rtcOccluded1Mp`,
-    `rtcOccludedNM`, and `rtcOccludedNp` are supported. This is only
-    the case if Embree is compiled with `EMBREE_RAY_PACKETS` enabled.
-
 +   `RTC_DEVICE_PROPERTY_RAY_MASK_SUPPORTED`: Queries whether ray masks
     are supported. This is only the case if Embree is compiled with
     `EMBREE_RAY_MASK` enabled.
@@ -68,6 +62,14 @@ Possible properties to query are:
 +   `RTC_DEVICE_PROPERTY_BACKFACE_CULLING_ENABLED`: Queries whether
     back face culling is enabled. This is only the case if Embree is
     compiled with `EMBREE_BACKFACE_CULLING` enabled.
+
++   `RTC_DEVICE_PROPERTY_BACKFACE_CULLING_CURVES_ENABLED`: Queries whether
+    back face culling for curves is enabled. This is only the case if Embree is
+    compiled with `EMBREE_BACKFACE_CULLING_CURVES` enabled.
+
++   `RTC_DEVICE_PROPERTY_BACKFACE_CULLING_SPHERES_ENABLED`: Queries whether
+    back face culling for spheres is enabled. This is only the case if Embree is
+    compiled with `EMBREE_BACKFACE_CULLING_SPHERES` enabled.
 
 +   `RTC_DEVICE_PROPERTY_COMPACT_POLYS_ENABLED`: Queries whether
     compact polys is enabled. This is only the case if Embree is

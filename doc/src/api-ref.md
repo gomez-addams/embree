@@ -3,6 +3,26 @@
 ```
 \pagebreak
 
+## rtcNewSYCLDevice
+``` {include=src/api/rtcNewSYCLDevice.md}
+```
+\pagebreak
+
+## rtcIsSYCLDeviceSupported
+``` {include=src/api/rtcIsSYCLDeviceSupported.md}
+```
+\pagebreak
+
+## rtcSYCLDeviceSelector
+``` {include=src/api/rtcSYCLDeviceSelector.md}
+```
+\pagebreak
+
+## rtcSetDeviceSYCLDevice
+``` {include=src/api/rtcSetDeviceSYCLDevice.md}
+```
+\pagebreak
+
 ## rtcRetainDevice
 ``` {include=src/api/rtcRetainDevice.md}
 ```
@@ -20,6 +40,16 @@
 
 ## rtcGetDeviceError
 ``` {include=src/api/rtcGetDeviceError.md}
+```
+\pagebreak
+
+## rtcGetDeviceLastErrorMessage
+``` {include=src/api/rtcGetDeviceLastErrorMessage.md}
+```
+\pagebreak
+
+## rtcGetErrorString
+``` {include=src/api/rtcGetErrorString.md}
 ```
 \pagebreak
 
@@ -164,6 +194,11 @@
 ```
 \pagebreak
 
+## RTC_GEOMETRY_TYPE_INSTANCE_ARRAY
+``` {include=src/api/RTC_GEOMETRY_TYPE_INSTANCE_ARRAY.md}
+```
+\pagebreak
+
 ## RTCCurveFlags
 ``` {include=src/api/RTCCurveFlags.md}
 ```
@@ -219,6 +254,11 @@
 ```
 \pagebreak
 
+## rtcSetGeometryMaxRadiusScale
+``` {include=src/api/rtcSetGeometryMaxRadiusScale.md}
+```
+\pagebreak
+
 ## rtcSetGeometryBuffer
 ``` {include=src/api/rtcSetGeometryBuffer.md}
 ```
@@ -264,13 +304,18 @@
 ```
 \pagebreak
 
-## rtcFilterIntersection
-``` {include=src/api/rtcFilterIntersection.md}
+## rtcSetGeometryEnableFilterFunctionFromArguments
+``` {include=src/api/rtcSetGeometryEnableFilterFunctionFromArguments.md}
 ```
 \pagebreak
 
-## rtcFilterOcclusion
-``` {include=src/api/rtcFilterOcclusion.md}
+## rtcInvokeIntersectFilterFromGeometry
+``` {include=src/api/rtcInvokeIntersectFilterFromGeometry.md}
+```
+\pagebreak
+
+## rtcInvokeOccludedFilterFromGeometry
+``` {include=src/api/rtcInvokeOccludedFilterFromGeometry.md}
 ```
 \pagebreak
 
@@ -284,6 +329,10 @@
 ```
 \pagebreak
 
+## rtcGetGeometryUserDataFromScene
+``` {include=src/api/rtcGetGeometryUserDataFromScene.md}
+```
+\pagebreak
 
 ## rtcSetGeometryUserPrimitiveCount
 ``` {include=src/api/rtcSetGeometryUserPrimitiveCount.md}
@@ -310,8 +359,19 @@
 ```
 \pagebreak
 
+## rtcGetSYCLDeviceFunctionPointer
+``` {include=src/api/rtcGetSYCLDeviceFunctionPointer.md}
+```
+\pagebreak
+
+
 ## rtcSetGeometryInstancedScene
 ``` {include=src/api/rtcSetGeometryInstancedScene.md}
+```
+\pagebreak
+
+## rtcSetGeometryInstancedScenes
+``` {include=src/api/rtcSetGeometryInstancedScenes.md}
 ```
 \pagebreak
 
@@ -330,6 +390,15 @@
 ```
 \pagebreak
 
+## rtcGetGeometryTransformEx
+``` {include=src/api/rtcGetGeometryTransformEx.md}
+```
+\pagebreak
+
+## rtcGetGeometryTransformFromScene
+``` {include=src/api/rtcGetGeometryTransformFromScene.md}
+```
+\pagebreak
 
 ## rtcSetGeometryTessellationRate
 ``` {include=src/api/rtcSetGeometryTessellationRate.md}
@@ -447,8 +516,23 @@
 ```
 \pagebreak
 
-## rtcInitIntersectContext
-``` {include=src/api/rtcInitIntersectContext.md}
+## RTCFeatureFlags
+``` {include=src/api/RTCFeatureFlags.md}
+```
+\pagebreak
+
+## rtcInitIntersectArguments
+``` {include=src/api/rtcInitIntersectArguments.md}
+```
+\pagebreak
+
+## rtcInitOccludedArguments
+``` {include=src/api/rtcInitOccludedArguments.md}
+```
+\pagebreak
+
+## rtcInitRayQueryContext
+``` {include=src/api/rtcInitRayQueryContext.md}
 ```
 \pagebreak
 
@@ -472,43 +556,23 @@
 ```
 \pagebreak
 
-## rtcIntersect1M
-``` {include=src/api/rtcIntersect1M.md}
+## rtcForwardIntersect1
+``` {include=src/api/rtcForwardIntersect1.md}
 ```
 \pagebreak
 
-## rtcOccluded1M
-``` {include=src/api/rtcOccluded1M.md}
+## rtcForwardOccluded1
+``` {include=src/api/rtcForwardOccluded1.md}
 ```
 \pagebreak
 
-## rtcIntersect1Mp
-``` {include=src/api/rtcIntersect1Mp.md}
+## rtcForwardIntersect4/8/16
+``` {include=src/api/rtcForwardIntersect4.md}
 ```
 \pagebreak
 
-## rtcOccluded1Mp
-``` {include=src/api/rtcOccluded1Mp.md}
-```
-\pagebreak
-
-## rtcIntersectNM
-``` {include=src/api/rtcIntersectNM.md}
-```
-\pagebreak
-
-## rtcOccludedNM
-``` {include=src/api/rtcOccludedNM.md}
-```
-\pagebreak
-
-## rtcIntersectNp
-``` {include=src/api/rtcIntersectNp.md}
-```
-\pagebreak
-
-## rtcOccludedNp
-``` {include=src/api/rtcOccludedNp.md}
+## rtcForwardOccluded4/8/16
+``` {include=src/api/rtcForwardOccluded4.md}
 ```
 \pagebreak
 

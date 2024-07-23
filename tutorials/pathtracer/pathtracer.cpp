@@ -4,6 +4,14 @@
 #include "../common/tutorial/tutorial.h"
 #include "../common/tutorial/benchmark_render.h"
 
+#if defined(EMBREE_SYCL_TUTORIAL)
+#  define NAME "pathtracer_sycl"
+#  define FEATURES FEATURE_RTCORE | FEATURE_SYCL
+#else
+#  define NAME "pathtracer"
+#  define FEATURES FEATURE_RTCORE
+#endif
+
 namespace embree
 {
   extern "C" {
@@ -15,7 +23,7 @@ namespace embree
   struct Tutorial : public SceneLoadingTutorialApplication
   {
     Tutorial()
-      : SceneLoadingTutorialApplication("pathtracer",FEATURE_RTCORE)
+      : SceneLoadingTutorialApplication(NAME,FEATURES)
     {
       registerOption("spp", [] (Ref<ParseStream> cin, const FileName& path) {
           g_spp = cin->getInt();
@@ -44,9 +52,9 @@ namespace embree
     {
       ImGui::Checkbox("accumulate",&g_accumulate);
       ImGui::Text("max path length");
-      ImGui::DragInt("",&g_max_path_length,1.0f,1,16);
+      ImGui::DragInt("##max_path_length",&g_max_path_length,1.0f,1,16);
       ImGui::Text("samples per pixel");
-      ImGui::DragInt("",&g_spp,1.0f,1,16);
+      ImGui::DragInt("##samples per pixel",&g_spp,1.0f,1,16);
     }
 #endif
   };

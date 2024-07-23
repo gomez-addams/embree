@@ -1,7 +1,7 @@
 ## Copyright 2009-2021 Intel Corporation
 ## SPDX-License-Identifier: Apache-2.0
 
-images_jpg := $(addprefix images/, $(addsuffix .jpg, displacement_geometry instanced_geometry pathtracer dynamic_scene subdivision_geometry user_geometry hair_geometry intersection_filter triangle_geometry viewer viewer_stream interpolation motion_blur_geometry curve_geometry voronoi closest_point multi_level_instancing point_geometry grid_geometry quaternion_motion_blur collide))
+images_jpg := $(addprefix images/, $(addsuffix .jpg, displacement_geometry instanced_geometry pathtracer dynamic_scene subdivision_geometry user_geometry hair_geometry intersection_filter triangle_geometry viewer interpolation motion_blur_geometry curve_geometry voronoi closest_point multi_level_instancing point_geometry grid_geometry quaternion_motion_blur collide))
 images_png := $(addprefix images/, $(addsuffix .png, quad_uv triangle_uv half_edges))
 images_pdf := $(addprefix images/, $(addsuffix .pdf, quad_uv triangle_uv half_edges))
 
@@ -10,7 +10,7 @@ webimages := $(addprefix www/, $(images_jpg))
 docfiles := $(addprefix doc/, README.md CHANGELOG.md readme.pdf)
 spec := embree-spec.rst
 man_src := $(wildcard src/api/*.md)
-manfiles := $(patsubst src/api/%.md,man/man3/%.3embree3,$(man_src))
+manfiles := $(patsubst src/api/%.md,man/man3/%.4embree4,$(man_src))
 
 all: www images man doc spec
 www: $(webpages) $(webimages)
@@ -27,9 +27,9 @@ PANDOC := pandoc
 ### add version
 ########################################################################
 
-tmp/version: ../include/embree3/rtcore_config.h
+tmp/version: ../include/embree4/rtcore_config.h
 	sed -n 's/#define RTC_VERSION_STRING \"\(.*\)\".*/\1/p' $< > $@
-tmp/version_major: ../include/embree3/rtcore_config.h
+tmp/version_major: ../include/embree4/rtcore_config.h
 	sed -n 's/#define RTC_VERSION_MAJOR \([0-9]\)/\1/p' $< > $@
 
 replace_version = sed -e "s/<EMBREE_VERSION>/`cat tmp/version`/g" $< | sed -e "s/<EMBREE_VERSION_MAJOR>/`cat tmp/version_major`/g" > $@
@@ -175,7 +175,7 @@ doc/readme.pdf: tmp/readme.tex tmp/readme_all.tex $(images_jpg) $(images_pdf)
 ### manpages
 ########################################################################
 
-man/man3/%.3embree3: src/api/%.md
+man/man3/%.4embree4: src/api/%.md
 	$(PANDOC) -s -t man $< -o $@
 
 ########################################################################

@@ -1,6 +1,15 @@
 ## Copyright 2009-2021 Intel Corporation
 ## SPDX-License-Identifier: Apache-2.0
 
+IF (EMBREE_SYCL_RT_SIMULATION)
+  FIND_PACKAGE(rtcore)
+ENDIF()
+
+IF (EMBREE_SYCL_SUPPORT)
+  ADD_SUBDIRECTORY(level_zero)
+  ADD_SUBDIRECTORY(rthwif)
+ENDIF()
+
 IF (EMBREE_CONFIG)
   ADD_DEFINITIONS(-DEMBREE_CONFIG="${EMBREE_CONFIG}")
 ENDIF()
@@ -34,10 +43,12 @@ SET(EMBREE_LIBRARY_FILES
   common/rtcore.cpp
   common/rtcore_builder.cpp
   common/scene.cpp
+  common/scene_verify.cpp
   common/alloc.cpp
   common/geometry.cpp
   common/scene_user_geometry.cpp
   common/scene_instance.cpp
+  common/scene_instance_array.cpp
   common/scene_triangle_mesh.cpp
   common/scene_quad_mesh.cpp
   common/scene_curves.cpp
@@ -52,6 +63,7 @@ SET(EMBREE_LIBRARY_FILES
 
   geometry/primitive4.cpp
   geometry/instance_intersector.cpp
+  geometry/instance_array_intersector.cpp
   geometry/curve_intersector_virtual_4v.cpp
   geometry/curve_intersector_virtual_4i.cpp
   geometry/curve_intersector_virtual_4i_mb.cpp
@@ -76,9 +88,17 @@ SET(EMBREE_LIBRARY_FILES
   bvh/bvh_builder_sah_spatial.cpp
   bvh/bvh_builder_sah_mb.cpp
   bvh/bvh_builder_twolevel.cpp
-
   bvh/bvh_intersector1_bvh4.cpp
   )
+
+
+IF (EMBREE_SYCL_SUPPORT)
+  SET(EMBREE_LIBRARY_FILES ${EMBREE_LIBRARY_FILES}
+  sycl/rthwif_embree_builder.cpp
+  sycl/scene_sycl.cpp)
+
+  set_source_files_properties(sycl/scene_sycl.cpp PROPERTIES COMPILE_FLAGS ${CMAKE_CXX_FLAGS_SYCL})
+ENDIF()
 
 IF (EMBREE_GEOMETRY_SUBDIVISION)
   SET(EMBREE_LIBRARY_FILES ${EMBREE_LIBRARY_FILES}
@@ -93,16 +113,14 @@ ENDIF()
 
 IF (EMBREE_RAY_PACKETS)
   SET(EMBREE_LIBRARY_FILES ${EMBREE_LIBRARY_FILES}
-
-  bvh/bvh_intersector_hybrid4_bvh4.cpp
-  bvh/bvh_intersector_stream_bvh4.cpp
-  bvh/bvh_intersector_stream_filters.cpp)
+  bvh/bvh_intersector_hybrid4_bvh4.cpp)
 ENDIF()
 
 MACRO(embree_files TARGET ISA)
       
   SET(${TARGET}
     geometry/instance_intersector.cpp
+    geometry/instance_array_intersector.cpp
     geometry/curve_intersector_virtual_4v.cpp
     geometry/curve_intersector_virtual_4i.cpp
     geometry/curve_intersector_virtual_4i_mb.cpp
@@ -120,6 +138,7 @@ MACRO(embree_files TARGET ISA)
     LIST(APPEND ${TARGET}
       common/scene_user_geometry.cpp
       common/scene_instance.cpp
+      common/scene_instance_array.cpp
       common/scene_triangle_mesh.cpp
       common/scene_quad_mesh.cpp 
       common/scene_curves.cpp
@@ -168,16 +187,13 @@ MACRO(embree_files TARGET ISA)
     
   IF (EMBREE_RAY_PACKETS)
     LIST(APPEND ${TARGET}
-      bvh/bvh_intersector_hybrid4_bvh4.cpp
-      bvh/bvh_intersector_stream_bvh4.cpp
-      bvh/bvh_intersector_stream_filters.cpp)
+      bvh/bvh_intersector_hybrid4_bvh4.cpp)
 
     IF (${ISA} GREATER ${SSE42})
       LIST(APPEND ${TARGET}
         bvh/bvh_intersector_hybrid8_bvh4.cpp
         bvh/bvh_intersector_hybrid4_bvh8.cpp
-        bvh/bvh_intersector_hybrid8_bvh8.cpp
-        bvh/bvh_intersector_stream_bvh8.cpp)
+        bvh/bvh_intersector_hybrid8_bvh8.cpp)
     ENDIF()
 
     IF (${ISA} GREATER ${AVX2})
@@ -228,9 +244,35 @@ MACRO (CheckGlobals library)
     ADD_CUSTOM_TARGET(${library}_check_globals ALL COMMAND ${CMAKE_COMMAND} -D file=$<TARGET_FILE:${library}> -P "${PROJECT_SOURCE_DIR}/common/cmake/check_globals.cmake" DEPENDS ${library})
   ENDIF()
 ENDMACRO()
-
+ 
 DISABLE_STACK_PROTECTOR_FOR_INTERSECTORS(${EMBREE_LIBRARY_FILES})
 ADD_LIBRARY(embree ${EMBREE_LIB_TYPE} ${EMBREE_LIBRARY_FILES})
+
+IF (EMBREE_SYCL_SUPPORT)
+  # add link flag '-fsycl' here to include the kernel for USM prefetch from
+  # scene_sycl.cpp in embree4.dll/embree4.so
+  TARGET_LINK_OPTIONS(embree PRIVATE "-fsycl")
+
+  ADD_LIBRARY(embree_sycl STATIC
+    sycl/rtcore_sycl.cpp
+    sycl/rthwif_embree.cpp)
+
+  SET_TARGET_PROPERTIES(embree_sycl PROPERTIES COMPILE_FLAGS ${CMAKE_CXX_FLAGS_SYCL})
+  IF (EMBREE_SYCL_RT_VALIDATION_API)
+    TARGET_LINK_LIBRARIES(embree_sycl PRIVATE embree_rthwif_sycl)
+  ENDIF()
+
+  IF (EMBREE_SYCL_RT_SIMULATION)
+    TARGET_LINK_LIBRARIES(embree_sycl PRIVATE rtcore)
+  ENDIF()
+
+  INSTALL(TARGETS embree_sycl EXPORT embree_sycl-targets ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT devel)
+  INSTALL(EXPORT embree_sycl-targets DESTINATION ${EMBREE_CMAKEEXPORT_DIR} COMPONENT devel)
+
+  SET_TARGET_PROPERTIES(embree_sycl PROPERTIES OUTPUT_NAME embree${EMBREE_VERSION_MAJOR}_sycl)
+
+ENDIF()
+
 SET_TARGET_PROPERTIES(embree PROPERTIES COMPILE_FLAGS "${FLAGS_LOWEST}")
 SET_TARGET_PROPERTIES(embree PROPERTIES COMPILE_DEFINITIONS "EMBREE_LOWEST_ISA")
 SET_PROPERTY(TARGET embree PROPERTY FOLDER kernels)
@@ -306,6 +348,11 @@ IF (EMBREE_ISA_AVX512 AND EMBREE_LIBRARY_FILES_AVX512)
 ENDIF()
 
 TARGET_LINK_LIBRARIES(embree PRIVATE ${EMBREE_LIBRARIES} sys math simd lexers tasking)
+IF (EMBREE_SYCL_SUPPORT)
+  TARGET_LINK_LIBRARIES(embree PRIVATE ${SYCL_LIB_NAME} ze_wrapper PUBLIC embree_sycl)
+ENDIF()
+
+#TARGET_LINK_LIBRARIES(embree PRIVATE ${EMBREE_LIBRARIES} sys math simd lexers tasking ${CMAKE_LINK_FLAGS_SYCL})  # FIXME: enable this line
 SET_TARGET_PROPERTIES(embree PROPERTIES OUTPUT_NAME ${EMBREE_LIBRARY_NAME})
 target_include_directories(embree PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../include>
@@ -315,7 +362,7 @@ target_include_directories(embree PUBLIC
 # libtbb is located in same install folder as libembree
 IF(WIN32)
 ELSEIF(APPLE)
-  SET_TARGET_PROPERTIES(embree PROPERTIES INSTALL_RPATH "@rpath") # On MacOSX the app is supposed to already have an rpath set to that folder
+  SET_TARGET_PROPERTIES(embree PROPERTIES INSTALL_RPATH "@loader_path") # On MacOSX we tell dyld to find libtbb in the folder libembree is placed
 ELSE()
   SET_TARGET_PROPERTIES(embree PROPERTIES INSTALL_RPATH "$ORIGIN")  # Linux we tell ld to find libtbb in the folder libembree is placed.
 ENDIF()
@@ -346,7 +393,7 @@ INSTALL(TARGETS embree EXPORT embree-targets
 # export Embree targets
 INSTALL(EXPORT embree-targets DESTINATION "${EMBREE_CMAKEEXPORT_DIR}" COMPONENT devel)
 
-# installs libembree3.so link
+# installs libembree4.so link
 IF (NOT EMBREE_STATIC_LIB)
   INSTALL(TARGETS embree
     LIBRARY NAMELINK_ONLY DESTINATION "${CMAKE_INSTALL_LIBDIR}" COMPONENT devel

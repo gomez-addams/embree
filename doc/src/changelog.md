@@ -1,6 +1,103 @@
 Version History
 ---------------
 
+### Embree 4.3.3
+-   Added RTCError RTC_ERROR_LEVEL_ZERO_RAYTRACING_SUPPORT_MISSING which can indicate a GPU driver that is too old or not installed properly.
+-   Added the API function rtcGetDeviceLastErrorMessage to query additional information about the last RTCError returned by rtcGetDeviceError. This can be used in case device creation failed and a rtcErrorFunction could not be set up for this purpose.
+-   Added the API function rtcGetErrorString which returns a string representation of a given RTCError error code. This is purely meant for convenient error information reporting on the user application side.
+-   Performance improvements on GPU for the one level instancing case (RTC_MAX_INSTANCE_LEVEL_COUNT 1).
+-   Reduced the number of unneccessary GPU-CPU USM back-migrations which can increase build performance for scene with many instances on GPU.
+-   Started adding public CI tests for streamlining integration of external pull requests.
+-   Work-around for problem with unsigned Windows binaries.
+
+### Embree 4.3.2
+-   Embree now uses level zero raytracing extension to build BVH which enables forward-compatibility. On Linux, the package intel-level-zero-gpu-raytracing has to be installed in addition to the other packages listed here [https://dgpu-docs.intel.com/](https://dgpu-docs.intel.com/).
+-   MacOS universal binary compilation now works.
+-   Some bugfixes for AVX512 on MacOS x86 machines.
+-   Known issue: It is recommended to run Embree on Intel® Data Center GPU Max Series (e.g. Intel® Data Center GPU Max 1550) with the following environment settings: NEOReadDebugKeys=1 UseKmdMigration=0
+-   Known issue: ISPC version of tutorials will not successfully build with MacOS universal binary compilation.
+
+### Embree 4.3.1
+-   Add missing EMBREE_GEOMETRY types to embree-config.cmake
+-   User defined thread count now takes precedence for internal task scheduler
+-   Fixed static linking issue with ze_wrapper library
+-   Better error reporting for SYCL platform and driver problems in embree_info and tutorial apps.
+-   Patch to glfw source is not applied by default anymore.
+-   Known issue: Running Embree on Intel® Data Center GPU Max Series with 2 tiles (e.g. Intel® Data Center GPU Max 1550) requires setting the environment variable ZE_FLAT_DEVICE_HIERARCHY=COMPOSITE.
+-   Known issue: Embree build using Apple Clang 15 and ARM support (via the SEE2NEON library) may cause "EXEC_BAD_INSTRUCTION" runtime exceptions. Please use Apple Clang <= 14 on macOS.
+
+### Embree 4.3.0
+-   Added instance array primitive for reducing memony requirements in scenes
+    with large amounts of similar instances.
+-   Properly checks driver if L0 RTAS extension can get loaded.
+-   Added varying version of rtcGetGeometryTransform for ISPC.
+-   Fixed signature of RTCMemoryMonitorFunction for ISPC.
+-   Add support for ARM64 Windows platform in CMake.
+
+### Embree 4.2.0
+-   SYCL version of Embree with GPU support is no longer in beta phase.
+-   Improved BVH build performance on many core machines for applications that oversubscribe threads.
+-   Added rtcGetGeometryTransformFromScene API function that can get used inside SYCL kernels.
+-   No longer linking to ze_loader in SYCL mode to avoid Intel(R) oneAPI Level Zero dependency
+    for CPU rendering.
+-   Releasing test package to test Embree.
+
+### Embree 4.1.0
+-   Added support for Intel® Data Center GPU Max Series.
+-   Added ARM64 Linux support.
+-   Added EMBREE_BACKFACE_CULLING_SPHERES cmake option. The new cmake option defaults to OFF.
+
+### Embree 4.0.1
+-   Improved performance for Tiger Lake, Comet Lake, Cannon Lake, Kaby Lake,
+    and Skylake client CPUs by using 256 bit SIMD instructions by default.
+-   Fixed broken motion blur of RTC_GEOMETRY_TYPE_ROUND_LINEAR_CURVE geometry type.
+-   Fixed bvh build retry issue for TBB 2020.3
+-   Added support for Intel® Data Center GPU Flex Series
+-   Fixed issue on systems without a SYCL platform.
+
+### Embree 4.0.0
+-   This Embree release adds support for Intel® Arc™ GPUs through SYCL.
+-   The SYCL support of Embree is in beta phase. Current functionality, quality,
+    and GPU performance may not reflect that of the final product. Please read the
+    documentation section "Embree SYCL Known Issues" for known limitations.
+-   Embree CPU support in this release as at Gold level, incorporating the same quality
+    and performance as previous releases.
+-   A small number of API changes were required to get optimal experience and
+    performance on the CPU and GPU. See documentation section "Upgrading from Embree 3 to
+    Embree 4" for details.
+-   rtcIntersect and rtcOccluded function arguments changed slightly.
+-   RTCIntersectContext is renamed to RTCRayQuery context and most members moved to
+    new RTCIntersectArguments and RTCOccludedArguments structures.
+-   rtcFilterIntersection and rtcFilterOcclusion API calls got replaced by
+    rtcInvokeIntersectFilterFromGeometry and rtcInvokeOccludedFilterFromGeometry API calls.
+-   rtcSetGeometryEnableFilterFunctionFromArguments enables argument filter functions for some geometry.
+-   RTC_RAY_QUERY_FLAG_INVOKE_ARGUMENT_FILTER ray query flag enables argument filter functions for each geometry.
+-   User geometry callbacks have to return if a valid hit was found.
+-   Ray masking is enabled by default now as required by most users.
+-   The default ray mask for geometries got changed from 0xFFFFFFFF to 0x1.
+-   Removed ray stream API as rarely used with minimal performance benefits over packet tracing.
+-   Introduced rtcForwardIntersect/rtcForwardOccluded API calls to trace tail recursive rays from user geometry callback.
+-   The rtcGetGeometryUserDataFromScene API call got added to be used in SYCL code.
+-   Added support for user geometry callback function pointer passed through ray query context
+-   Feature flags enable reducing code complexity for optimal performance on the GPU.
+-   Fixed compilation issues for ARM AArch64 processor under Linux.
+-   Setting default frequency level to SIMD256 for ARM on all platforms.
+    This allows using double pumped NEON execution by enabling EMBREE_ISA_NEON2X in cmake under Linux.
+-   Fixed missing end caps of motion blurred line segments.
+-   EMBREE_ISPC_SUPPORT is turned OFF by default.
+-   Embree drops support of the deprecated Intel(R) Compiler. It is replaced by
+    the Intel(R) oneAPI DPC++/C++ Compiler on Windows and Linux and the
+    Intel(R) C++ Classic Compiler on MacOS (latest tested versions is 2023.0.0).
+
+### Embree 3.13.5
+-   Fixed bug in bounding flat Catmull Rom curves of subdivision level 4.
+-   Improved self intersection avoidance for
+    RTC_GEOMETRY_TYPE_DISC_POINT geometry type. Intersections are
+    skipped if the ray origin lies inside the sphere defined by the
+    point primitive. Self intersection avoidance can get disabled at compile time
+    using the EMBREE_DISC_POINT_SELF_INTERSECTION_AVOIDANCE cmake option.
+-   Fixed spatial splitting for non-planar quads.
+
 ### Embree 3.13.4
 -   Using 8-wide BVH and double pumped NEON instructions on Apple M1 gives 8% performance boost.
 -   Fixed binning related crash in SAH BVH builder.
@@ -116,7 +213,7 @@ Version History
 -   For sphere geometries the intersection filter gets now invoked for
     front and back hit.
 -   Fixed some bugs for quaternion motion blur.
--   RTCIntersectContext always non-const in Embree API
+-   RTCRayQueryContext always non-const in Embree API
 -   Made RTCHit aligned to 16 bytes in Embree API
 
 ### New Features in Embree 3.7.0
@@ -389,7 +486,7 @@ Version History
     when modifying only the tessellation rate and vertex array.
 
 ### New Features in Embree 2.16.2
--   Fixed bug that caused NULL intersection context in intersection
+-   Fixed bug that caused NULL ray query context in intersection
     filter when instancing was used.
 -   Fixed an issue where uv's where outside the triangle (or quad) for
     very small triangles (or quads). In robust mode we improved the uv

@@ -1,4 +1,4 @@
-% rtcSetGeometryBoundsFunction(3) | Embree Ray Tracing Kernels 3
+% rtcSetGeometryBoundsFunction(3) | Embree Ray Tracing Kernels 4
 
 #### NAME
 
@@ -7,7 +7,7 @@
 
 #### SYNOPSIS
 
-    #include <embree3/rtcore.h>
+    #include <embree4/rtcore.h>
 
     struct RTCBoundsFunctionArguments
     {
@@ -37,6 +37,9 @@ Only a single callback function can be registered per geometry, and
 further invocations overwrite the previously set callback function.
 Passing `NULL` as function pointer disables the registered callback
 function.
+
+In SYCL mode the BVH construction is done on the host and the passed
+function pointer must be a host-side function pointer.
 
 The registered bounding box callback function is invoked to calculate
 axis-aligned bounding boxes of the primitives of the user-defined

@@ -1,4 +1,4 @@
-% rtcSetGeometryIntersectFunction(3) | Embree Ray Tracing Kernels 3
+% rtcSetGeometryIntersectFunction(3) | Embree Ray Tracing Kernels 4
 
 #### NAME
 
@@ -7,14 +7,14 @@
 
 #### SYNOPSIS
 
-    #include <embree3/rtcore.h>
+    #include <embree4/rtcore.h>
 
     struct RTCIntersectFunctionNArguments
     {
       int* valid;
       void* geometryUserPtr;
       unsigned int primID;
-      struct RTCIntersectContext* context;
+      struct RTCRayQueryContext* context;
       struct RTCRayHitN* rayhit;
       unsigned int N;
       unsigned int geomID;
@@ -49,7 +49,7 @@ the ray packet size, `valid` points to an array of integers that
 specify whether the corresponding ray is valid (-1) or invalid (0), the
 `geometryUserPtr` member points to the geometry user data previously set
 through `rtcSetGeometryUserData`, the `context` member points to the
-intersection context passed to the ray query, the `rayhit` member points
+ray query context passed to the ray query, the `rayhit` member points
 to a ray and hit packet of variable size `N`, and the `geomID` and
 `primID` member identifies the geometry ID and primitive ID of the
 primitive to intersect.
@@ -67,14 +67,14 @@ user-defined primitive with the ray was found in the valid range (from
 `tnear` to `tfar`), it should update the hit distance of the ray
 (`tfar` member) and the hit (`u`, `v`, `Ng`, `instID`, `geomID`,
 `primID` members). In particular, the currently intersected instance is
-stored in the `instID` field of the intersection context, which must be
+stored in the `instID` field of the ray query context, which must be
 deep copied into the `instID` member of the hit.
 
 As a primitive might have multiple intersections with a ray, the
 intersection filter function needs to be invoked by the user geometry
 intersection callback for each encountered intersection, if filtering
 of intersections is desired. This can be achieved through the
-`rtcFilterIntersection` call.
+`rtcInvokeIntersectFilterFromGeometry` call.
 
 Within the user geometry intersect function, it is safe to trace new
 rays and create new scenes and geometries.
@@ -89,4 +89,4 @@ On failure an error code is set that can be queried using
 
 #### SEE ALSO
 
-[rtcSetGeometryOccludedFunction], [rtcSetGeometryUserData], [rtcFilterIntersection]
+[rtcSetGeometryOccludedFunction], [rtcSetGeometryUserData], [rtcInvokeIntersectFilterFromGeometry]

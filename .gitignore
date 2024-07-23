@@ -7,5 +7,6 @@ x64
 .DS_Store
 kernels/config.h
 kernels/hash.h
-include/embree3/rtcore_config.h
+include/embree4/rtcore_config.h
 build
+out

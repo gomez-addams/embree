@@ -5,6 +5,11 @@
 
 namespace embree {
 
+/* all features required by this tutorial */
+#define FEATURE_MASK \
+  RTC_FEATURE_FLAG_TRIANGLE | \
+  RTC_FEATURE_FLAG_GRID
+
 /* configuration */
 #define EDGE_LEVEL 257
 #define GRID_RESOLUTION_X EDGE_LEVEL
@@ -258,9 +263,9 @@ void createGridGeometry (GridMesh& gmesh)
   gmesh.geom = rtcNewGeometry (g_device, RTC_GEOMETRY_TYPE_GRID);
   gmesh.vertices = (Vec3fa *) rtcSetNewGeometryBuffer(gmesh.geom,RTC_BUFFER_TYPE_VERTEX,0,RTC_FORMAT_FLOAT3,sizeof(Vec3fa),numVertices);
   gmesh.egrids = (RTCGrid *) rtcSetNewGeometryBuffer(gmesh.geom,RTC_BUFFER_TYPE_GRID,0,RTC_FORMAT_GRID,sizeof(RTCGrid),numGrids);
-  gmesh.normals = (Vec3fa*) alignedMalloc(numVertices*sizeof(Vec3fa),16);
+  gmesh.normals = (Vec3fa*) alignedUSMMalloc((numVertices)*sizeof(Vec3fa),16);
 
-  Grid* hgrids = (Grid*) alignedMalloc(NUM_INDICES*sizeof(Grid),16);
+  Grid* hgrids = (Grid*) alignedUSMMalloc((NUM_INDICES)*sizeof(Grid),16);
 
   unsigned int g=0; // grid index for embree grids
   unsigned int h=0; // grid index for helper grids
@@ -465,6 +470,7 @@ void createGridGeometry (GridMesh& gmesh)
   }
 
   /* create normal debug geometry */
+#if 0
   gmesh.geomNormals = rtcNewGeometry (g_device, RTC_GEOMETRY_TYPE_ROUND_BEZIER_CURVE);
   Vec3ff *nvertices = (Vec3ff *) rtcSetNewGeometryBuffer(gmesh.geomNormals,RTC_BUFFER_TYPE_VERTEX,0,RTC_FORMAT_FLOAT4,sizeof(Vec3ff),4*numVertices);
   int*    curves    = (int    *) rtcSetNewGeometryBuffer(gmesh.geomNormals,RTC_BUFFER_TYPE_INDEX,0,RTC_FORMAT_UINT   ,sizeof(int)   ,numVertices);
@@ -492,10 +498,11 @@ void createGridGeometry (GridMesh& gmesh)
     }
     h+=sphere_faces[f];
   }
-
+#endif
+  
   /* we do not need this temporary data anymore */
   rtcReleaseGeometry(geomSubdiv);
-  alignedFree(hgrids);
+  alignedUSMFree(hgrids);
   
   rtcCommitGeometry(gmesh.geom);
 }
@@ -547,19 +554,22 @@ Vec3fa mylerp(float f, const Vec3fa& a, const Vec3fa& b) { // FIXME: use lerpr, 
 }
 
 /* task that renders a single screen tile */
-Vec3fa renderPixelStandard(const TutorialData& data,
-                          float x, float y,
-                          const ISPCCamera& camera,
-                          RayStats& stats)
+void renderPixelStandard(const TutorialData& data,
+                         int x, int y, 
+                         int* pixels,
+                         const unsigned int width,
+                         const unsigned int height,
+                         const float time,
+                         const ISPCCamera& camera, RayStats& stats)
 {
-  RTCIntersectContext context;
-  rtcInitIntersectContext(&context);
-
   /* initialize ray */
   Ray ray(Vec3fa(camera.xfm.p), Vec3fa(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)), 0.0f, inf);
 
   /* intersect ray with scene */
-  rtcIntersect1(data.g_scene,&context,RTCRayHit_(ray));
+  RTCIntersectArguments iargs;
+  rtcInitIntersectArguments(&iargs);
+  iargs.feature_mask = (RTCFeatureFlags) (FEATURE_MASK);
+  rtcIntersect1(data.g_scene,RTCRayHit_(ray),&iargs);
   RayStats_addRay(stats);
   
   /* shade pixels */
@@ -597,14 +607,22 @@ Vec3fa renderPixelStandard(const TutorialData& data,
     Ray shadow(ray.org + ray.tfar*ray.dir, neg(lightDir), 0.001f, inf, 0.0f);
 
     /* trace shadow ray */
-    rtcOccluded1(data.g_scene,&context,RTCRay_(shadow));
+    RTCOccludedArguments sargs;
+    rtcInitOccludedArguments(&sargs);
+    sargs.feature_mask = (RTCFeatureFlags) (FEATURE_MASK);
+    rtcOccluded1(data.g_scene,RTCRay_(shadow),&sargs);
     RayStats_addShadowRay(stats);
 
     /* add light contribution */
     if (shadow.tfar >= 0.0f)
       color = color + diffuse*clamp(-(dot(lightDir,Ng)),0.0f,1.0f);
   }
-  return color;
+
+  /* write color to framebuffer */
+  unsigned int r = (unsigned int) (255.0f * clamp(color.x,0.0f,1.0f));
+  unsigned int g = (unsigned int) (255.0f * clamp(color.y,0.0f,1.0f));
+  unsigned int b = (unsigned int) (255.0f * clamp(color.z,0.0f,1.0f));
+  pixels[y*width+x] = (b << 16) + (g << 8) + r;
 }
 
 /* renders a single screen tile */
@@ -627,14 +645,7 @@ void renderTileStandard(int taskIndex,
 
   for (unsigned int y=y0; y<y1; y++) for (unsigned int x=x0; x<x1; x++)
   {
-    /* calculate pixel color */
-    Vec3fa color = renderPixelStandard(data,(float)x,(float)y,camera,g_stats[threadIndex]);
-
-    /* write color to framebuffer */
-    unsigned int r = (unsigned int) (255.0f * clamp(color.x,0.0f,1.0f));
-    unsigned int g = (unsigned int) (255.0f * clamp(color.y,0.0f,1.0f));
-    unsigned int b = (unsigned int) (255.0f * clamp(color.z,0.0f,1.0f));
-    pixels[y*width+x] = (b << 16) + (g << 8) + r;
+    renderPixelStandard(data,x,y,pixels,width,height,time,camera,g_stats[threadIndex]);
   }
 }
 
@@ -657,6 +668,25 @@ extern "C" void renderFrameStandard (int* pixels,
                           const ISPCCamera& camera)
 {
   /* render image */
+#if defined(EMBREE_SYCL_TUTORIAL) && !defined(EMBREE_SYCL_RT_SIMULATION)
+  TutorialData ldata = data;
+  sycl::event event = global_gpu_queue->submit([=](sycl::handler& cgh){
+    const sycl::nd_range<2> nd_range = make_nd_range(height,width);
+    cgh.parallel_for(nd_range,[=](sycl::nd_item<2> item) {
+      const unsigned int x = item.get_global_id(1); if (x >= width ) return;
+      const unsigned int y = item.get_global_id(0); if (y >= height) return;
+      RayStats stats;
+      renderPixelStandard(ldata,x,y,pixels,width,height,time,camera,stats);
+    });
+  });
+  global_gpu_queue->wait_and_throw();
+
+  const auto t0 = event.template get_profiling_info<sycl::info::event_profiling::command_start>();
+  const auto t1 = event.template get_profiling_info<sycl::info::event_profiling::command_end>();
+  const double dt = (t1-t0)*1E-9;
+  ((ISPCCamera*)&camera)->render_time = dt;
+  
+#else
   const int numTilesX = (width +TILE_SIZE_X-1)/TILE_SIZE_X;
   const int numTilesY = (height+TILE_SIZE_Y-1)/TILE_SIZE_Y;
   parallel_for(size_t(0),size_t(numTilesX*numTilesY),[&](const range<size_t>& range) {
@@ -664,6 +694,7 @@ extern "C" void renderFrameStandard (int* pixels,
     for (size_t i=range.begin(); i<range.end(); i++)
       renderTileTask((int)i,threadIndex,pixels,width,height,time,camera,numTilesX,numTilesY);
   }); 
+#endif
 }
 
 /* called by the C++ code to render */

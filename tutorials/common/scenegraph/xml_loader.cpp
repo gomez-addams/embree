@@ -239,6 +239,8 @@ namespace embree
     Ref<SceneGraph::Node> loadBezierCurves(const Ref<XML>& xml, SceneGraph::CurveSubtype subtype); // only for compatibility
     Ref<SceneGraph::Node> loadCurves(const Ref<XML>& xml, RTCGeometryType type);
     Ref<SceneGraph::Node> loadPoints(const Ref<XML>& xml, RTCGeometryType type);
+
+    Ref<SceneGraph::Node> loadFurBall(const Ref<XML>& xml);
  
   private:
     Ref<SceneGraph::Node> loadPerspectiveCamera(const Ref<XML>& xml);
@@ -271,6 +273,7 @@ namespace embree
     avector<Vec3fa> loadVec3faArray(const Ref<XML>& xml);
     avector<Vec3ff> loadVec3ffArray(const Ref<XML>& xml);
     avector<AffineSpace3ff> loadAffineSpace3faArray(const Ref<XML>& xml);
+    avector<AffineSpace3ff> loadQuaternionArray(const Ref<XML>& xml);
     std::vector<unsigned> loadUIntArray(const Ref<XML>& xml);
     std::vector<unsigned char> loadUCharArray(const Ref<XML>& xml);
     std::vector<Vec2i> loadVec2iArray(const Ref<XML>& xml);
@@ -419,14 +422,21 @@ namespace embree
       skew = string_to_Vec3f(xml->parm("skew"));
     if (xml->parm("shift") != "")
       shift = string_to_Vec3f(xml->parm("shift"));
+    if (xml->parm("rotate") != "") {
+      q = string_to_Vec4f(xml->parm("rotate"));
+      // convert from degree to radians
+      q.w = 2.f*M_PI/360.f*q.w;
+      Quaternion3f Q = Quaternion3f::rotate(Vec3fa(q.x, q.y, q.z), q.w);
+      q = Vec4f(Q.i, Q.j, Q.k, Q.r);
+    }
     if (xml->parm("quaternion") != "") {
       q = string_to_Vec4f(xml->parm("quaternion"));
     }
 
     AffineSpace3ff res(LinearSpace3fa(
-      Vec3ff(scale.x, skew.x, skew.y, q.x),
-      Vec3ff(shift.x, scale.y, skew.z, q.y),
-      Vec3ff(shift.y, shift.z, scale.z, q.z)),
+      Vec3ff(scale.x, shift.x, shift.y, q.x),
+      Vec3ff(skew.x, scale.y, shift.z, q.y),
+      Vec3ff(skew.y, skew.z, scale.z, q.z)),
       Vec3ff(translate.x, translate.y, translate.z, q.w));
 
     if (xml->body.size() == 16) {
@@ -559,13 +569,39 @@ namespace embree
   {
     if (!xml) return avector<AffineSpace3ff>();
 
-    if (xml->parm("ofs") == "") 
+    if (xml->name == "AffineSpaceArray") {
+      avector<AffineSpace3ff> spaceArray;
+      for (size_t i = 0; i < xml->size(); ++i) {
+        auto child = xml->child(i);
+        AffineSpace3ff space = AffineSpace3ff(load<AffineSpace3fa>(child));
+        spaceArray.push_back(space);
+      }
+      return spaceArray;
+    }
+    else if (xml->parm("ofs") != "") {
+      std::vector<AffineSpace3f> temp = loadBinary<std::vector<AffineSpace3f>>(xml);
+      avector<AffineSpace3ff> data; data.resize(temp.size());
+      for (size_t i=0; i<temp.size(); i++) data[i] = AffineSpace3ff(AffineSpace3fa(temp[i]));
+      return data;
+    }
+    else
       THROW_RUNTIME_ERROR(xml->loc.str()+": invalid AffineSpace3fa array");
+  }
 
-    std::vector<AffineSpace3f> temp = loadBinary<std::vector<AffineSpace3f>>(xml);
-    avector<AffineSpace3ff> data; data.resize(temp.size());
-    for (size_t i=0; i<temp.size(); i++) data[i] = AffineSpace3ff(AffineSpace3fa(temp[i]));
-    return data;
+  avector<AffineSpace3ff> XMLLoader::loadQuaternionArray(const Ref<XML>& xml)
+  {
+    if (!xml) return avector<AffineSpace3ff>();
+
+    if (xml->name == "QuaternionArray") {
+      avector<AffineSpace3ff> spaceArray;
+      for (size_t i = 0; i < xml->size(); ++i) {
+        auto child = xml->child(i);
+        spaceArray.push_back(loadQuaternion(child));
+      }
+      return spaceArray;
+    }
+    else
+      THROW_RUNTIME_ERROR(xml->loc.str()+": invalid Quaternion array");
   }
 
   std::vector<unsigned> XMLLoader::loadUIntArray(const Ref<XML>& xml)
@@ -786,7 +822,8 @@ namespace embree
       if (ftell(binFile) + width*height*bytesPerTexel > (unsigned)binFileSize)
         THROW_RUNTIME_ERROR("error reading from binary file: "+binFileName.str());
       
-      texture = std::make_shared<Texture>(width,height,format);
+      //texture = std::make_shared<Texture>(width,height,format);
+      texture = std::shared_ptr<Texture>(new Texture(width,height,format));
       if (width*height != fread(texture->data, bytesPerTexel, width*height, binFile)) 
         THROW_RUNTIME_ERROR("error reading from binary file: "+binFileName.str());
     }
@@ -887,16 +924,20 @@ namespace embree
     }
     else if (type == "OBJ") 
     {
-      const std::shared_ptr<Texture> map_d = parms.getTexture("map_d");  
       const float d = parms.getFloat("d", 1.0f);
-      const std::shared_ptr<Texture> map_Kd = parms.getTexture("map_Kd");  
+      const std::shared_ptr<Texture> map_d = parms.getTexture("map_d");  
+      const Vec3fa Ka = parms.getVec3fa("Ka", zero);
+      const std::shared_ptr<Texture> map_Ka = parms.getTexture("map_Ka");  
       const Vec3fa Kd = parms.getVec3fa("Kd", one);
-      const std::shared_ptr<Texture> map_Ks = parms.getTexture("map_Ks");  
+      const std::shared_ptr<Texture> map_Kd = parms.getTexture("map_Kd");  
       const Vec3fa Ks = parms.getVec3fa("Ks", zero);
+      const std::shared_ptr<Texture> map_Ks = parms.getTexture("map_Ks");  
+      const Vec3fa Kt = parms.getVec3fa("Kt", zero);
+      const std::shared_ptr<Texture> map_Kt = parms.getTexture("map_Kt");  
+      const float Ns = parms.getFloat("Ns", 10.0f); 
       const std::shared_ptr<Texture> map_Ns = parms.getTexture("map_Ns");  
-      const float Ns = parms.getFloat("Ns", 10.0f);
-      const std::shared_ptr<Texture> map_Bump = parms.getTexture("map_Bump");
-      return new OBJMaterial(d,map_d,Kd,map_Kd,Ks,map_Ks,Ns,map_Ns,map_Bump);
+      const std::shared_ptr<Texture> map_Displ = parms.getTexture("map_Displ");
+      return new OBJMaterial(d,map_d,Ka,map_Ka,Kd,map_Kd,Ks,map_Ks,Kt,map_Kt,Ns,map_Ns,map_Displ);
     }
     else if (type == "OBJMaterial")  // for BGF file format
     {
@@ -1268,6 +1309,243 @@ namespace embree
     return mesh.dynamicCast<SceneGraph::Node>();
   }
 
+  Ref<SceneGraph::Node> XMLLoader::loadFurBall(const Ref<XML>& xml)
+  {
+    Ref<SceneGraph::GroupNode> group = new SceneGraph::GroupNode;
+
+    float r = (xml->parm("radius") != "") ? xml->parm_float("radius") : 10.0f;
+    int slices = (xml->parm("slices") != "") ? int(xml->parm_float("slices")) : 60;
+    int slabs = (xml->parm("slabs") != "") ? int(xml->parm_float("slabs")) : 60;
+    int nhairs = (xml->parm("nhairs") != "") ? int(xml->parm_float("nhairs")) : 30000;
+    float hairwidth = (xml->parm("hairwidth") != "") ? int(xml->parm_float("hairwidth")) : (r / 100.0f);
+    float hairlength = (xml->parm("hairlength") != "") ? int(xml->parm_float("hairlength")) : (r / 10.0f);
+    RTCGeometryType hairtype = RTC_GEOMETRY_TYPE_ROUND_BEZIER_CURVE;
+    bool is_linear = false;
+    bool is_bezier = false;
+    bool is_bspline = false;
+    bool is_hermite = false;
+    bool is_catmulrom = false;
+    bool is_normaloriented = false;
+    std::string phairtype = xml->parm("hairtype");
+    if (phairtype == "linear_flat")                    { hairtype = RTC_GEOMETRY_TYPE_FLAT_LINEAR_CURVE;                  is_linear = true;                               }
+    else if (phairtype == "linear_round")              { hairtype = RTC_GEOMETRY_TYPE_ROUND_LINEAR_CURVE;                 is_linear = true;                               }
+    else if (phairtype == "bezier_flat")               { hairtype = RTC_GEOMETRY_TYPE_FLAT_BEZIER_CURVE;                  is_bezier = true;                               }
+    else if (phairtype == "bezier_round")              { hairtype = RTC_GEOMETRY_TYPE_ROUND_BEZIER_CURVE;                 is_bezier = true;                               }
+    else if (phairtype == "bezier_normaloriented")     { hairtype = RTC_GEOMETRY_TYPE_NORMAL_ORIENTED_BEZIER_CURVE;       is_bezier = true;     is_normaloriented = true; }
+    else if (phairtype == "bspline_flat")              { hairtype = RTC_GEOMETRY_TYPE_FLAT_BSPLINE_CURVE;                 is_bspline = true;                              }
+    else if (phairtype == "bspline_round")             { hairtype = RTC_GEOMETRY_TYPE_ROUND_BSPLINE_CURVE;                is_bspline = true;                              }
+    else if (phairtype == "bspline_normaloriented")    { hairtype = RTC_GEOMETRY_TYPE_NORMAL_ORIENTED_BSPLINE_CURVE;      is_bspline = true;    is_normaloriented = true; }
+    else if (phairtype == "hermite_flat")              { hairtype = RTC_GEOMETRY_TYPE_FLAT_HERMITE_CURVE;                 is_hermite = true;                              }
+    else if (phairtype == "hermite_round")             { hairtype = RTC_GEOMETRY_TYPE_ROUND_HERMITE_CURVE;                is_hermite = true;                              }
+    else if (phairtype == "hermite_normaloriented")    { hairtype = RTC_GEOMETRY_TYPE_NORMAL_ORIENTED_HERMITE_CURVE;      is_hermite = true;    is_normaloriented = true; }
+    else if (phairtype == "catmulrom_flat")            { hairtype = RTC_GEOMETRY_TYPE_FLAT_CATMULL_ROM_CURVE;             is_catmulrom = true;                            }
+    else if (phairtype == "catmulrom_round")           { hairtype = RTC_GEOMETRY_TYPE_ROUND_CATMULL_ROM_CURVE;            is_catmulrom = true;                            }
+    else if (phairtype == "catmulrom_normaloriented")  { hairtype = RTC_GEOMETRY_TYPE_NORMAL_ORIENTED_CATMULL_ROM_CURVE;  is_catmulrom = true;  is_normaloriented = true; }
+    else                                               { hairtype = RTC_GEOMETRY_TYPE_ROUND_BEZIER_CURVE;                 is_bezier = true;                               }
+
+    Ref<SceneGraph::MaterialNode> material = loadMaterial(xml->child("material"));
+    Ref<SceneGraph::TriangleMeshNode> mesh = new SceneGraph::TriangleMeshNode(material,BBox1f(0,1),0);
+
+    {
+      avector<Vec3fa> data;
+      data.resize(slices * (slabs - 1) + 2);
+      data[0] = Vec3fa(0, -r, 0);
+
+      float dphi = float(pi) / float(slabs);
+      float dtheta = float(pi) / float(slices) * 2.0f;
+      int i = 0;
+
+      for (int slab=0; slab<slabs-1; slab++)
+      {
+        float phi = dphi * (slab + 1);
+        for (int slice=0; slice<slices; slice++)
+        {
+          float theta = dtheta * slice;
+          float x = r * sin(phi) * cos(theta);
+          float z = r * sin(phi) * sin(theta);
+          float y = r * cos(phi);
+          data[i] = Vec3fa(x, y, z);
+          i++;
+        }
+      }
+
+      data[i++] = Vec3fa(0, r, 0);
+      data[i++] = Vec3fa(0, -r, 0);
+      mesh->positions.push_back(data);
+    }
+
+    {
+      int top = mesh->positions.back().size() - 2;
+      int bot = mesh->positions.back().size() - 1;
+
+      for (int slice=0; slice<slices; slice++)
+      {
+        mesh->triangles.push_back(SceneGraph::TriangleMeshNode::Triangle(top, slice, (slice + 1) % slices));
+      }
+
+      for (int slab=0; slab<slabs-2; slab++)
+      {
+        for (int slice=0; slice<slices; slice++)
+        {
+          int offset_a = slab * slices;
+          int offset_b = (slab + 1) * slices;
+
+          mesh->triangles.push_back(SceneGraph::TriangleMeshNode::Triangle(offset_a + slice, offset_b + slice, offset_b + (slice + 1) % slices));
+          mesh->triangles.push_back(SceneGraph::TriangleMeshNode::Triangle(offset_a + slice, offset_b + (slice + 1) % slices, offset_a + (slice + 1) % slices));
+        }
+      }
+
+      for (int slice=0; slice<slices; slice++)
+      {
+        mesh->triangles.push_back(SceneGraph::TriangleMeshNode::Triangle(bot, bot - slices - 1 + slice, bot - slices - 1+ (slice + 1) % slices));
+      }
+    }
+
+    mesh->verify();
+    group->add(mesh.dynamicCast<SceneGraph::Node>());
+
+    // generate N random hairs
+    Ref<SceneGraph::HairSetNode> hairs = new SceneGraph::HairSetNode(hairtype,material,BBox1f(0,1),0);
+
+    int N = nhairs;
+
+    {
+      // rand() is not consistent with linux/win/mac or other compilers, so we use a manual lcg (with similar seeds as used in glibc)
+      uint32_t rand_int = 1234;
+      uint32_t a = 1103515245;
+      uint32_t c = 12345;
+      uint32_t m = 1 << 31;
+      auto rand_float = [&rand_int, &a, &c, &m]() {
+        rand_int = (a * rand_int + c) % m;
+        return rand_int / float(m);
+      };
+
+      size_t nvertices_per_curve = (is_hermite) ? 2 : 4;
+
+      avector<Vec3ff> pos;
+      avector<Vec3fa> norm;
+      avector<Vec3ff> tans;
+      avector<Vec3fa> dnorm;
+      pos.resize(N *  nvertices_per_curve);
+      norm.resize(N * nvertices_per_curve);
+      if (is_hermite) {
+        tans.resize(N * nvertices_per_curve);
+        dnorm.resize(N * nvertices_per_curve);
+      }
+
+      float theta = 2.0f * float(pi) * rand_float();
+      float phi = acos(1 - 2 * rand_float());
+      Vec3fa last = Vec3fa(sin(phi) * cos(theta), cos(phi), sin(phi) * sin(theta));
+
+      for (int i = 0; i < N; i++) {
+          float theta = 2.0f * float(pi) * rand_float();
+          float phi = acos(1 - 2 * rand_float());
+          Vec3fa d = Vec3fa(sin(phi) * cos(theta), cos(phi), sin(phi) * sin(theta));
+
+          Vec3fa p = normalize(cross(d, last));
+          last = p;
+
+          Vec3fa start = d * r * (1.0f - 0.01f * hairlength);
+          Vec3fa mid   = d * r * (1.0f + 0.03f * hairlength);
+          Vec3fa mid2  = d * r * (1.0f + 0.07f * hairlength);
+          Vec3fa stop  = d * r * (1.0f + 0.07f * hairlength + 0.03f * hairlength * rand_float());
+
+          // Tweak positions based on curve type
+          if (is_bezier) {
+            stop = stop + p * r * 0.051f * hairlength;
+          }
+          else if (is_linear) {
+            mid  = mid  + p * r * 0.001f * hairlength;
+            mid2 = mid2 + p * r * 0.021f * hairlength;
+            stop = stop + p * r * 0.051f * hairlength;
+          }
+          else if (is_bspline) {
+            mid2 = mid2 + p * r * 0.021f * hairlength;
+            stop  = d * r * (1.0f + 0.07f * hairlength + 0.13f * hairlength * rand_float());
+            stop = stop + p * r * 0.081f * hairlength;
+          }
+
+          // Hermite only has 2 supports
+          if (is_hermite) {
+            pos[i*2  ] = Vec3ff(start.x, start.y, start.z, hairwidth);
+            pos[i*2+1] = Vec3ff(stop.x, stop.y, stop.z, 0.0f);
+
+            Vec3fa tstart = normalize(d);
+            Vec3fa tmid = normalize(p);
+
+            tans[i*2  ] = Vec3ff(tstart.x, tstart.y, tstart.z, 0.2f);
+            tans[i*2+1] = Vec3ff(tmid.x, tmid.y, tmid.z, 0.8f);
+
+            norm[i*2  ] = normalize(cross(d, p));
+            norm[i*2+1] = normalize(cross(d, p));
+
+            if (is_normaloriented) {
+              dnorm[i*2  ] = Vec3fa(0.0f, 0.0f, 0.0f);
+              dnorm[i*2+1] = Vec3fa(0.0f, 0.0f, 0.0f);
+            }
+          }
+          else {
+            pos[i*4+0] = Vec3ff(start.x, start.y, start.z, hairwidth);
+            pos[i*4+1] = Vec3ff(mid.x, mid.y, mid.z, hairwidth);
+            pos[i*4+2] = Vec3ff(mid.x, mid2.y, mid2.z, hairwidth * 0.5f);
+            pos[i*4+3] = Vec3ff(stop.x, stop.y, stop.z, 0.0f);
+          }
+
+          // normals already added, if curve type is hermite
+          if (is_normaloriented && !is_hermite) {
+            norm[i*4+0] = normalize(cross(d, p));
+            norm[i*4+1] = normalize(cross(start - mid, p));
+            norm[i*4+2] = normalize(cross(mid - mid2, p));
+            norm[i*4+3] = normalize(cross(mid2 - stop, p));
+          }
+      }
+
+      hairs->positions.push_back(pos);
+      if (is_normaloriented) hairs->normals.push_back(norm);
+      if (is_hermite) hairs->tangents.push_back(tans);
+      if (is_hermite && is_normaloriented) hairs->dnormals.push_back(dnorm);
+
+      // linear uses 3 segments per hair
+      if (is_linear) {
+        hairs->hairs.resize(N * 3);
+        for (size_t i=0; i<N; i++) {
+          hairs->hairs[i * 3    ] = SceneGraph::HairSetNode::Hair(i * 4    , i * 3    );
+          hairs->hairs[i * 3 + 1] = SceneGraph::HairSetNode::Hair(i * 4 + 1, i * 3 + 1);
+          hairs->hairs[i * 3 + 2] = SceneGraph::HairSetNode::Hair(i * 4 + 2, i * 3 + 2);
+        }
+      }
+      // rest uses nvertices_per_curve number of supports
+      else {
+        hairs->hairs.resize(N);
+        for (size_t i=0; i<N; i++) {
+          hairs->hairs[i] = SceneGraph::HairSetNode::Hair(i * nvertices_per_curve, i);
+        }
+      }
+
+      // tweak hairwidth of tips to make bsplines/catmulrom look slightly better
+      if (is_bspline || is_catmulrom) {
+        for (size_t i=0; i<N; i++) { 
+          hairs->positions.back()[i * 4 + 1].w = 0.5f * hairwidth;
+          hairs->positions.back()[i * 4 + 2].w = 0.01f * hairwidth;
+          hairs->positions.back()[i * 4 + 3].w = 0.0f;
+        }
+      }
+
+      if (is_bspline) {
+        std::vector<unsigned> indices;
+        indices.resize(N);
+        for (size_t i=0; i<N; i++) { indices[i] = i; }
+        for (auto& vertices : hairs->positions)
+          fix_bspline_end_points(indices,vertices);
+      }
+
+      hairs->verify();
+      group->add(hairs.dynamicCast<SceneGraph::Node>());
+    }
+
+    return group.dynamicCast<SceneGraph::Node>();
+  }
+
   Ref<SceneGraph::Node> XMLLoader::loadTransformNode(const Ref<XML>& xml) 
   {
     /* parse number of time steps to use for instanced geometry */
@@ -1278,26 +1556,32 @@ namespace embree
     bool quaternion = false;
     AffineSpace3ff space;
     avector<AffineSpace3ff> spaces(time_steps);
-    if (xml->children[0]->name == "AffineSpace") {
-      space = (AffineSpace3ff) load<AffineSpace3fa>(xml->children[0]);
+    size_t j = 0;
+    for (size_t i=0; i<time_steps; i++) {
+      AffineSpace3ff space;
+      if (xml->children[i]->name == "AffineSpace") {
+        space = (AffineSpace3ff) load<AffineSpace3fa>(xml->children[i]);
+        spaces[j++] = space;
+      }
+      else if (xml->children[i]->name == "Quaternion") {
+        space = loadQuaternion(xml->children[i]);
+        quaternion = true;
+        spaces[j++] = space;
+      }
+      else {
+        THROW_RUNTIME_ERROR(xml->loc.str()+": unknown transformation representation");
+      }
     }
-    else if (xml->children[0]->name == "Quaternion") {
-      space = loadQuaternion(xml->children[0]);
-      quaternion = true;
-    }
-    else {
-      THROW_RUNTIME_ERROR(xml->loc.str()+": unknown transformation representation");
-    }
-    for (size_t i=0; i<time_steps; i++) spaces[i] = space;
+    assert(j == time_steps);
     
-    if (xml->size() == 2) {
-      auto node = new SceneGraph::TransformNode(spaces,loadNode(xml->children[1]));
+    if (xml->size() == time_steps+1) {
+      auto node = new SceneGraph::TransformNode(spaces,loadNode(xml->children[time_steps]));
       node->spaces.quaternion = quaternion;
       return node;
     }
   
     Ref<SceneGraph::GroupNode> group = new SceneGraph::GroupNode;
-    for (size_t i=1; i<xml->size(); i++)
+    for (size_t i=time_steps; i<xml->size(); i++)
       group->add(loadNode(xml->children[i]));
     
     auto node = new  SceneGraph::TransformNode(spaces,group.dynamicCast<SceneGraph::Node>());
@@ -1307,15 +1591,46 @@ namespace embree
 
   Ref<SceneGraph::Node> XMLLoader::loadMultiTransformNode(const Ref<XML>& xml) 
   {
-    avector<AffineSpace3ff> spaces = loadAffineSpace3faArray(xml->children[0]);
-    Ref<SceneGraph::Node> child = loadNode(xml->children[1]);
-    
-    /* instantiate the object group with all transformations */
-    Ref<SceneGraph::GroupNode> igroup = new SceneGraph::GroupNode;
-    for (size_t i=0; i<spaces.size(); i++)
-      igroup->add(new SceneGraph::TransformNode(spaces[i],child));
-    
-    return igroup.dynamicCast<SceneGraph::Node>();
+    /* parse number of time steps to use for instanced geometry */
+    int time_steps = 1;
+    std::string str_time_steps = xml->parm("time_steps");
+    if (str_time_steps != "") time_steps = max(1,std::stoi(str_time_steps));
+
+    bool quaternion = false;
+    avector<AffineSpace3ff> space;
+    avector<avector<AffineSpace3ff>> spaces(time_steps);
+    size_t j = 0;
+    for (size_t i=0; i<time_steps; i++) {
+      if (xml->children[i]->name == "AffineSpaceArray") {
+        spaces[j++] = loadAffineSpace3faArray(xml->children[i]);
+      }
+      else if (xml->children[i]->name == "QuaternionArray") {
+        spaces[j++] = loadQuaternionArray(xml->children[i]);
+        quaternion = true;
+      }
+      else {
+        THROW_RUNTIME_ERROR(xml->loc.str()+": unknown transformation representation");
+      }
+    }
+    assert(j == time_steps);
+
+    if (xml->size() == time_steps+1) {
+      auto node = new SceneGraph::MultiTransformNode(spaces,loadNode(xml->children[time_steps]));
+      for (size_t i = 0; i < node->spaces.size(); ++i) {
+        node->spaces[i].quaternion = quaternion;
+      }
+      return node;
+    }
+
+    Ref<SceneGraph::GroupNode> group = new SceneGraph::GroupNode;
+    for (size_t i=time_steps; i<xml->size(); i++)
+      group->add(loadNode(xml->children[i]));
+
+    auto node = new  SceneGraph::MultiTransformNode(spaces,group.dynamicCast<SceneGraph::Node>());
+    for (size_t i = 0; i < node->spaces.size(); ++i) {
+      node->spaces[i].quaternion = quaternion;
+    }
+    return node;
   }
 
   Ref<SceneGraph::Node> XMLLoader::loadTransform2Node(const Ref<XML>& xml) 
@@ -1547,6 +1862,8 @@ namespace embree
         set_time_range(node,BBox1f(time_range.x,time_range.y));
       }
 
+      else if (xml->name == "FurBall") node = state.sceneMap[id] = loadFurBall(xml);
+
       else THROW_RUNTIME_ERROR(xml->loc.str()+": unknown tag: "+xml->name);
 
       node->name = xml->parm("name");
@@ -1635,7 +1952,6 @@ namespace embree
 
   Ref<SceneGraph::Node> XMLLoader::load(const FileName& fileName, const AffineSpace3fa& space)
   {
-    //PRINT(fileName.str());
     SharedState state;
     XMLLoader loader(fileName,space,state); return loader.root;
   }
@@ -1645,7 +1961,6 @@ namespace embree
     if (state.sceneMap.find(fileName) != state.sceneMap.end())
       return state.sceneMap[fileName];
 
-    //PRINT(fileName.str());
     XMLLoader loader(fileName,space,state);
     state.sceneMap[fileName] = loader.root;
     return loader.root;
@@ -1666,6 +1981,7 @@ namespace embree
       binFileSize = ftell(binFile);
       fseek(binFile, 0L, SEEK_SET);
     }
+
 
     Ref<XML> xml = parseXML(fileName);
     if (xml->name == "scene") 

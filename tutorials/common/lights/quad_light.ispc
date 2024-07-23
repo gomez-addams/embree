@@ -20,9 +20,9 @@ struct QuadLight
 // Implementation
 //////////////////////////////////////////////////////////////////////////////
 
-Light_SampleRes QuadLight_sample(const uniform Light* uniform super,
-                                 const DifferentialGeometry& dg,
-                                 const Vec2f& s)
+SYCL_EXTERNAL Light_SampleRes QuadLight_sample(const uniform Light* uniform super,
+                                                              const DifferentialGeometry& dg,
+                                                              const Vec2f& s)
 {
   const QuadLight* uniform self = (QuadLight* uniform)super;
   Light_SampleRes res;
@@ -46,6 +46,18 @@ Light_SampleRes QuadLight_sample(const uniform Light* uniform super,
   // emit only to one side
   res.weight = cosd > 0.f ? self->radiance * rcp(res.pdf) : make_Vec3f(0.f);
 
+  return res;
+}
+
+SYCL_EXTERNAL Light_EvalRes QuadLight_eval(const uniform Light* uniform super,
+                                                          const DifferentialGeometry& dg,
+                                                          const Vec3f& dir)
+  
+{
+  Light_EvalRes res;
+  res.value = make_Vec3f(0,0,0);
+  res.dist = inf;
+  res.pdf = 0.f;
   return res;
 }
 
@@ -77,7 +89,8 @@ export void* uniform QuadLight_create()
   uniform QuadLight* uniform self = uniform new uniform QuadLight;
 
   Light_Constructor(&self->super);
-  self->super.sample = QuadLight_sample;
+  //self->super.sample = GET_FUNCTION_POINTER(QuadLight_sample);
+  self->super.type = LIGHT_QUAD;
 
   QuadLight_set(self,
                 make_Vec3f(0.f),

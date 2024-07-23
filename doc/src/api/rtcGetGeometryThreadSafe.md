@@ -1,4 +1,4 @@
-% rtcGetGeometryThreadSafe(3) | Embree Ray Tracing Kernels 3
+% rtcGetGeometryThreadSafe(3) | Embree Ray Tracing Kernels 4
 
 #### NAME
 
@@ -7,7 +7,7 @@
 
 #### SYNOPSIS
 
-    #include <embree3/rtcore.h>
+    #include <embree4/rtcore.h>
 
     RTCGeometry rtcGetGeometryThreadSafe(RTCScene scene, unsigned int geomID);
 

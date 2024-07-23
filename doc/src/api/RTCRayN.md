@@ -1,4 +1,4 @@
-% RTCRayN(3) | Embree Ray Tracing Kernels 3
+% RTCRayN(3) | Embree Ray Tracing Kernels 4
 
 #### NAME
 
@@ -6,7 +6,7 @@
 
 #### SYNOPSIS
 
-    #include <embree3/rtcore_ray.h>
+    #include <embree4/rtcore_ray.h>
 
     struct RTCRayN;
 

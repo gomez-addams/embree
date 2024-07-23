@@ -75,7 +75,7 @@ void init_VisualizationData(uniform VisualizationData * uniform visData)
 uniform VisualizationData g_visDataEmbreeInstance;
 uniform VisualizationData g_visDataUserDefinedInstance;
 
-inline void pushInstanceId(uniform RTCIntersectContext* uniform ctx, uniform unsigned int id)
+inline void pushInstanceId(uniform RTCRayQueryContext* uniform ctx, uniform unsigned int id)
 {
 #if RTC_MAX_INSTANCE_LEVEL_COUNT > 1
   ctx->instID[ctx->instStackSize++] = id;
@@ -84,7 +84,7 @@ inline void pushInstanceId(uniform RTCIntersectContext* uniform ctx, uniform uns
 #endif
 }
 
-inline void popInstanceId(uniform RTCIntersectContext* uniform ctx)
+inline void popInstanceId(uniform RTCRayQueryContext* uniform ctx)
 {
 #if RTC_MAX_INSTANCE_LEVEL_COUNT > 1
   ctx->instID[--ctx->instStackSize] = RTC_INVALID_GEOMETRY_ID;
@@ -93,7 +93,7 @@ inline void popInstanceId(uniform RTCIntersectContext* uniform ctx)
 #endif
 }
 
-inline void copyInstanceIdStack(uniform const RTCIntersectContext* uniform ctx, varying unsigned* uniform tgt)
+inline void copyInstanceIdStack(uniform const RTCRayQueryContext* uniform ctx, varying unsigned* uniform tgt)
 {
   tgt[0] = ctx->instID[0];
 #if (RTC_MAX_INSTANCE_LEVEL_COUNT > 1)
@@ -278,7 +278,7 @@ unmasked void instanceIntersectFunc(const RTCIntersectFunctionNArguments* unifor
   
   const uniform int* uniform valid = args->valid;
   void* uniform ptr  = args->geometryUserPtr;
-  uniform RTCIntersectContext* uniform context = args->context;
+  uniform RTCRayQueryContext* uniform context = args->context;
   RTCRayHitN* uniform rays = (RTCRayHitN* uniform)args->rayhit;
                                     
   assert(args->N == programCount);
@@ -295,8 +295,13 @@ unmasked void instanceIntersectFunc(const RTCIntersectFunctionNArguments* unifor
   ray->dir = xfmVector(instance->world2local,ray_dir);
   ray->tnear = ray_tnear;
   ray->tfar  = ray_tfar;
+
+  uniform RTCIntersectArguments args;
+  rtcInitIntersectArguments(&args);
+  args.context = context;
+  
   pushInstanceId(context, instance->userID);
-  rtcIntersectV(instance->object,context,RTCRayHit_(*ray));
+  rtcIntersectV(instance->object,RTCRayHit_(*ray),&args);
   popInstanceId(context);
   const float updated_tfar = ray->tfar;
   ray->org = ray_org;
@@ -687,9 +692,6 @@ inline Vec3f face_forward(const Vec3f& dir, const Vec3f& _Ng) {
 /* task that renders a single screen tile */
 Vec3f renderPixelStandard(float x, float y, const uniform ISPCCamera& camera, uniform RayStats& stats)
 {
-  uniform RTCIntersectContext context;
-  rtcInitIntersectContext(&context);
-  
   /* initialize ray */
   Ray ray = make_Ray(make_Vec3f(camera.xfm.p), 
                      make_Vec3f(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)), 
@@ -697,7 +699,7 @@ Vec3f renderPixelStandard(float x, float y, const uniform ISPCCamera& camera, un
                      RTC_INVALID_GEOMETRY_ID, RTC_INVALID_GEOMETRY_ID);
 
   /* intersect ray with scene */
-  rtcIntersectV(g_scene,&context,RTCRayHit_(ray));
+  rtcIntersectV(g_scene,RTCRayHit_(ray));
   RayStats_addRay(stats);
 
   uniform VisualizationData * uniform visData = g_userDefinedInstancing 

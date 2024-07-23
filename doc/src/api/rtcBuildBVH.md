@@ -1,4 +1,4 @@
-% rtcBuildBVH(3) | Embree Ray Tracing Kernels 3
+% rtcBuildBVH(3) | Embree Ray Tracing Kernels 4
 
 #### NAME
 
@@ -6,7 +6,7 @@
 
 #### SYNOPSIS
 
-    #include <embree3/rtcore.h>
+    #include <embree4/rtcore.h>
 
     struct RTC_ALIGN(32) RTCBuildPrimitive
     {

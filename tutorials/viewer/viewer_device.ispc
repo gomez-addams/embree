@@ -7,6 +7,13 @@ RTCScene g_scene = NULL;
 extern uniform bool g_changed;
 uniform TutorialData data;
 
+#if defined(EMBREE_SYCL_TUTORIAL) && !defined(EMBREE_SYCL_RT_SIMULATION) && defined(USE_SPECIALIZATION_CONSTANTS)
+const sycl::specialization_id<RTCFeatureFlags> spec_feature_mask;
+#endif
+
+extern uniform RTCFeatureFlags g_feature_mask;
+extern uniform bool g_use_scene_features;
+
 #define SPP 1
 
 #define FIXED_EDGE_TESSELLATION_VALUE 3
@@ -20,18 +27,18 @@ unmasked uniform bool monitorProgressFunction(void* uniform ptr, uniform double 
   return true;
 }
 
-inline uniform float updateEdgeLevel( uniform ISPCSubdivMesh* uniform mesh, const uniform Vec3fa& cam_pos, const uniform unsigned int e0, const uniform unsigned int e1)
+inline uniform float updateEdgeLevel( uniform ISPCSubdivMesh* uniform mesh, const uniform Vec3f& cam_pos, const uniform unsigned int e0, const uniform unsigned int e1)
 {
-  const uniform Vec3fa v0 = mesh->positions[0][mesh->position_indices[e0]];
-  const uniform Vec3fa v1 = mesh->positions[0][mesh->position_indices[e1]];
-  const uniform Vec3fa edge = v1-v0;
-  const uniform Vec3fa P = 0.5f*(v1+v0);
-  const uniform Vec3fa dist = cam_pos - P;
+  const uniform Vec3f v0 = make_Vec3f(mesh->positions[0][mesh->position_indices[e0]]);
+  const uniform Vec3f v1 = make_Vec3f(mesh->positions[0][mesh->position_indices[e1]]);
+  const uniform Vec3f edge = v1-v0;
+  const uniform Vec3f P = 0.5f*(v1+v0);
+  const uniform Vec3f dist = cam_pos - P;
   return max(min(LEVEL_FACTOR*(0.5f*length(edge)/length(dist)),MAX_EDGE_LEVEL),MIN_EDGE_LEVEL);
 }
 
 
-void updateEdgeLevelBuffer( uniform ISPCSubdivMesh* uniform mesh, const uniform Vec3fa& cam_pos, uniform unsigned int startID, uniform unsigned int endID )
+void updateEdgeLevelBuffer( uniform ISPCSubdivMesh* uniform mesh, const uniform Vec3f& cam_pos, uniform unsigned int startID, uniform unsigned int endID )
 {
   for (uniform unsigned int f=startID; f<endID;f++) {
     uniform unsigned int e = mesh->face_offsets[f];
@@ -49,14 +56,14 @@ void updateEdgeLevelBuffer( uniform ISPCSubdivMesh* uniform mesh, const uniform 
 }
 
 #if defined(ISPC)
-task void updateSubMeshEdgeLevelBufferTask( uniform ISPCSubdivMesh* uniform mesh, const uniform Vec3fa& cam_pos )
+task void updateSubMeshEdgeLevelBufferTask( uniform ISPCSubdivMesh* uniform mesh, const uniform Vec3f& cam_pos )
 {
   const uniform unsigned int size = mesh->numFaces;
   const uniform unsigned int startID = ((taskIndex+0)*size)/taskCount;
   const uniform unsigned int endID   = ((taskIndex+1)*size)/taskCount;
   updateEdgeLevelBuffer(mesh,cam_pos,startID,endID);
 }
-task void updateMeshEdgeLevelBufferTask( uniform ISPCScene* uniform scene_in, const uniform Vec3fa& cam_pos )
+task void updateMeshEdgeLevelBufferTask( uniform ISPCScene* uniform scene_in, const uniform Vec3f& cam_pos )
 {
   uniform ISPCGeometry* uniform geometry = g_ispc_scene->geometries[taskIndex];
   if (geometry->type != SUBDIV_MESH) return;
@@ -69,7 +76,7 @@ task void updateMeshEdgeLevelBufferTask( uniform ISPCScene* uniform scene_in, co
 }
 #endif
 
-void updateEdgeLevels(uniform ISPCScene* uniform scene_in, const uniform Vec3fa& cam_pos)
+void updateEdgeLevels(uniform ISPCScene* uniform scene_in, const uniform Vec3f& cam_pos)
 {
   /* first update small meshes */
 #if defined(ISPC)
@@ -93,15 +100,6 @@ void updateEdgeLevels(uniform ISPCScene* uniform scene_in, const uniform Vec3fa&
   }
 }
 
-#if 0
-uniform bool g_use_smooth_normals = false;
-void device_key_pressed_handler(uniform int key)
-{
-  if (key == 110 /*n*/) g_use_smooth_normals = !g_use_smooth_normals;
-  else device_key_pressed_default(key);
-}
-#endif
-
 RTCScene convertScene(uniform ISPCScene* uniform scene_in)
 {
   for (uniform unsigned int i=0; i<scene_in->numGeometries; i++)
@@ -112,7 +110,9 @@ RTCScene convertScene(uniform ISPCScene* uniform scene_in)
     }
   }
 
-  RTCScene scene_out = ConvertScene(g_device, g_ispc_scene, RTC_BUILD_QUALITY_MEDIUM);
+  uniform RTCFeatureFlags feature_mask = RTC_FEATURE_FLAG_NONE;
+  RTCScene scene_out = ConvertScene(g_device, g_ispc_scene, RTC_BUILD_QUALITY_MEDIUM, RTC_SCENE_FLAG_NONE, &feature_mask);
+  if (g_use_scene_features) g_feature_mask = feature_mask;
   rtcSetSceneProgressMonitorFunction(scene_out,monitorProgressFunction,NULL);
 
   /* commit changes to scene */
@@ -172,23 +172,28 @@ void renderPixelStandard(const uniform TutorialData& data,
                          const uniform unsigned int width,
                          const uniform unsigned int height,
                          const float time,
-                         const uniform ISPCCamera& camera, uniform RayStats& stats)
+                         const uniform ISPCCamera& camera,
+                         uniform RayStats& stats,
+                         const uniform RTCFeatureFlags feature_mask)
 {
   /* initialize sampler */
   RandomSampler sampler;
   RandomSampler_init(sampler, (int)x, (int)y, 0);
 
   /* initialize ray */
-  Ray ray = make_Ray(make_Vec3f(camera.xfm.p), make_Vec3f(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)), 0.0f, inf, RandomSampler_get1D(sampler));
+  float ray_time = data.motion_blur ? RandomSampler_get1D(sampler) : time;
+  Ray ray = make_Ray(make_Vec3f(camera.xfm.p), make_Vec3f(normalize(x*camera.xfm.l.vx + y*camera.xfm.l.vy + camera.xfm.l.vz)), 0.0f, inf, ray_time);
 
   /* intersect ray with scene */
-  uniform RTCIntersectContext context;
-  rtcInitIntersectContext(&context);
-  context.flags = data.iflags_coherent;
+  uniform RTCIntersectArguments args;
+  rtcInitIntersectArguments(&args);
+  args.flags = data.iflags_coherent;
 #if RTC_MIN_WIDTH
-  context.minWidthDistanceFactor = 0.5f*data.min_width/width;
+  args.minWidthDistanceFactor = 0.5f*data.min_width/width;
 #endif
-  rtcIntersectV(data.scene,&context,RTCRayHit_(ray));
+  args.feature_mask = feature_mask;
+  
+  rtcIntersectV(data.scene,RTCRayHit_(ray),&args);
   RayStats_addRay(stats);
 
   /* shade background black */
@@ -260,17 +265,17 @@ task void renderTileTask(uniform int* uniform pixels,
 
   foreach_tiled (y = y0 ... y1, x = x0 ... x1)
   {
-    renderPixelStandard(data,x,y,pixels,width,height,time,camera,g_stats[threadIndex]);
+    renderPixelStandard(data,x,y,pixels,width,height,time,camera,g_stats[threadIndex],g_feature_mask);
   }
 }
 
-uniform Vec3fa old_p;
+uniform Vec3f old_p;
 
 /* called by the C++ code for initialization */
 export void device_init (uniform int8* uniform cfg)
 {
   TutorialData_Constructor(&data);
-  old_p = make_Vec3fa(1E10);
+  old_p = make_Vec3f(1E10);
 }
 
 export void renderFrameStandard (uniform int* uniform pixels,
@@ -279,10 +284,47 @@ export void renderFrameStandard (uniform int* uniform pixels,
                           const uniform float time,
                           const uniform ISPCCamera& camera)
 {
+#if defined(EMBREE_SYCL_TUTORIAL) && !defined(EMBREE_SYCL_RT_SIMULATION)
+  TutorialData ldata = data;
+
+#if defined(USE_SPECIALIZATION_CONSTANTS)
+  sycl::event event = global_gpu_queue->submit([=](sycl::handler& cgh) {
+    cgh.set_specialization_constant<spec_feature_mask>(g_feature_mask);
+    const sycl::nd_range<2> nd_range = make_nd_range(height,width);
+    cgh.parallel_for(nd_range,[=](sycl::nd_item<2> item, sycl::kernel_handler kh) {
+      const unsigned int x = item.get_global_id(1); if (x >= width ) return;
+      const unsigned int y = item.get_global_id(0); if (y >= height) return;
+      RayStats stats;
+      const RTCFeatureFlags feature_mask = kh.get_specialization_constant<spec_feature_mask>();
+      renderPixelStandard(ldata,x,y,pixels,width,height,time,camera,stats,feature_mask);
+    });
+  });
+  global_gpu_queue->wait_and_throw();
+#else
+  sycl::event event = global_gpu_queue->submit([=](sycl::handler& cgh) {
+    const sycl::nd_range<2> nd_range = make_nd_range(height,width);
+    cgh.parallel_for(nd_range,[=](sycl::nd_item<2> item) {
+      const unsigned int x = item.get_global_id(1); if (x >= width ) return;
+      const unsigned int y = item.get_global_id(0); if (y >= height) return;
+      RayStats stats;
+      const RTCFeatureFlags feature_mask = RTC_FEATURE_FLAG_ALL;
+      renderPixelStandard(ldata,x,y,pixels,width,height,time,camera,stats,feature_mask);
+    });
+  });
+  global_gpu_queue->wait_and_throw();
+#endif
+
+  const auto t0 = event.template get_profiling_info<sycl::info::event_profiling::command_start>();
+  const auto t1 = event.template get_profiling_info<sycl::info::event_profiling::command_end>();
+  const double dt = (t1-t0)*1E-9;
+  ((ISPCCamera*)&camera)->render_time = dt;
+ 
+#else
   /* render image */
   const uniform int numTilesX = (width +TILE_SIZE_X-1)/TILE_SIZE_X;
   const uniform int numTilesY = (height+TILE_SIZE_Y-1)/TILE_SIZE_Y;
   launch[numTilesX*numTilesY] renderTileTask(pixels,width,height,time,camera,numTilesX,numTilesY); sync;
+#endif
 }
 
 /* called by the C++ code to render */

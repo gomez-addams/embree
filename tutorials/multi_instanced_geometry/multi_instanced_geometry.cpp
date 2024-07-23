@@ -4,12 +4,20 @@
 #include "../common/tutorial/tutorial.h"
 #include "../common/tutorial/benchmark_render.h"
 
+#if defined(EMBREE_SYCL_TUTORIAL)
+#  define NAME "multi_instanced_geometry_sycl"
+#  define FEATURES FEATURE_RTCORE | FEATURE_SYCL
+#else
+#define NAME "multi_instanced_geometry"
+#  define FEATURES FEATURE_RTCORE
+#endif
+
 namespace embree
 {
   struct Tutorial : public TutorialApplication 
   {
     Tutorial()
-      : TutorialApplication("multi_instanced_geometry", FEATURE_RTCORE | FEATURE_STREAM) 
+      : TutorialApplication(NAME, FEATURES) 
     {
       camera.from = Vec3fa(130.f, 50.f, 130.f);
       camera.to   = Vec3fa(0.0f, 0.0f, 0.0f);
